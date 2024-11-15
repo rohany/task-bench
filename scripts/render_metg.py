@@ -37,7 +37,7 @@ parser.add_argument('--width', type=float, default=9)
 parser.add_argument('--height', type=float, default=5)
 parser.add_argument('--legend', default='../legend.csv')
 parser.add_argument('--legend-ncol', type=int, default=1)
-parser.add_argument('--legend-fontsize', type=int, default=12)
+parser.add_argument('--legend-fontsize', type=int, default=13)
 parser.add_argument('--legend-position', default='center left')
 parser.add_argument('--legend-base', type=int, default=0)
 parser.add_argument('--legend-suffix', action='append', default=[])
@@ -130,9 +130,9 @@ colors = [
     (0.137,0.122,0.125),
 ] * 10
 
-# matplotlib.rcParams["font.family"] = "STIXGeneral"
-# matplotlib.rcParams["mathtext.fontset"] = "stix"
-matplotlib.rcParams["mathtext.fontset"] = "stixsans"
+matplotlib.rcParams['font.family'] = 'serif'
+matplotlib.rcParams['font.serif'] = 'Times'
+matplotlib.rcParams['text.usetex'] = True
 
 matplotlib.rc('xtick', labelsize=12)
 matplotlib.rc('ytick', labelsize=12)
@@ -149,21 +149,19 @@ ax.tick_params(axis='x', width=0.5)
 ax.tick_params(axis='y', width=0.5)
 
 if args.x_percent:
-    ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, _: '{:.0%}'.format(x)))
+    ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, _: r'{:.0f}\%'.format(100*x)))
 if args.y_percent:
-    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda y, _: r'{:.0f}\%'.format(100*y)))
 
 if args.x_invert:
     ax.invert_xaxis()
 if args.y_invert:
     ax.invert_yaxis()
 
-if args.xlog and args.ylog:
-    plt.loglog(basex=args.xbase)
-elif args.xlog:
-    plt.semilogx(basex=args.xbase)
-elif args.ylog:
-    plt.semilogy()
+if args.xlog:
+    ax.set_xscale("log", base=args.xbase)
+if args.ylog:
+    ax.set_yscale("log", base=10)
 
 data = csv2rec(args.filename)
 nodes = getattr(data, args.xdata)
@@ -272,8 +270,8 @@ if args.xlim:
 if args.ylim:
     plt.ylim(*args.ylim)
 
-plt.xlabel(args.xlabel, fontsize=12)
-plt.ylabel(args.ylabel, fontsize=12)
+plt.xlabel(args.xlabel, fontsize=14)
+plt.ylabel(args.ylabel, fontsize=14)
 if args.title:
     plt.title(args.title, fontsize=14)
 

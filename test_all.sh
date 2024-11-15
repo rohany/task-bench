@@ -43,18 +43,18 @@ if [[ $TASKBENCH_USE_MPI -eq 1 ]]; then
     for t in "${extended_types[@]}"; do
         for k in "${kernels[@]}"; do
             for binary in nonblock bulk_synchronous; do
-                mpirun -np 1 ./mpi/$binary -steps $steps -type $t $k
-                mpirun -np 2 ./mpi/$binary -steps $steps -type $t $k
-                mpirun -np 4 ./mpi/$binary -steps $steps -type $t $k
-                mpirun -np 4 ./mpi/$binary -steps $steps -type $t $k -and -steps $steps -type $t $k
+                mpirun -np 1 ./mpi/$binary -steps $steps -type $t $k -nodes 1
+                mpirun -np 2 ./mpi/$binary -steps $steps -type $t $k -nodes 2
+                mpirun -np 4 ./mpi/$binary -steps $steps -type $t $k -nodes 4
+                mpirun -np 4 ./mpi/$binary -steps $steps -type $t $k -and -steps $steps -type $t $k -nodes 4
             done
         done
     done
     for t in no_comm stencil_1d stencil_1d_periodic all_to_all; do # FIXME: trivial dom tree fft nearest spread random_nearest are broken
         for k in "${kernels[@]}"; do
-            for binary in bcast alltoall buffered_send; do
-                mpirun -np 4 ./mpi/$binary -steps $steps -type $t $k
-                mpirun -np 4 ./mpi/$binary -steps $steps -type $t $k -and -steps $steps -type $t $k
+            for binary in deprecated/bcast deprecated/alltoall deprecated/buffered_send; do
+                mpirun -np 4 ./mpi/$binary -steps $steps -type $t $k -nodes 4
+                mpirun -np 4 ./mpi/$binary -steps $steps -type $t $k -and -steps $steps -type $t $k -nodes 4
             done
         done
     done
@@ -63,10 +63,10 @@ fi
 if [[ $USE_MPI_OPENMP -eq 1 ]]; then
     for t in "${extended_types[@]}"; do
         for k in "${kernels[@]}"; do
-            mpirun -np 1 ./mpi_openmp/forall -steps $steps -type $t $k
-            mpirun -np 2 ./mpi_openmp/forall -steps $steps -type $t $k
-            mpirun -np 4 ./mpi_openmp/forall -steps $steps -type $t $k
-            mpirun -np 4 ./mpi_openmp/forall -steps $steps -type $t $k -and -steps $steps -type $t $k
+            mpirun -np 1 ./mpi_openmp/forall -steps $steps -type $t $k -nodes 1
+            mpirun -np 2 ./mpi_openmp/forall -steps $steps -type $t $k -nodes 2
+            mpirun -np 4 ./mpi_openmp/forall -steps $steps -type $t $k -nodes 4
+            mpirun -np 4 ./mpi_openmp/forall -steps $steps -type $t $k -and -steps $steps -type $t $k -nodes 4
         done
     done
 fi
@@ -76,10 +76,10 @@ if [[ $USE_LEGION -eq 1 ]]; then
         for k in "${kernels[@]}"; do
             ./legion/task_bench -steps $steps -type $t $k -ll:cpu 2
             if [[ $USE_GASNET -eq 1 ]]; then
-                mpirun -np 2 ./legion/task_bench -steps $steps -type $t $k -ll:cpu 1
-                mpirun -np 4 ./legion/task_bench -steps $steps -type $t $k -ll:cpu 1
+                mpirun -np 2 ./legion/task_bench -steps $steps -type $t $k -ll:cpu 1 -nodes 2
+                mpirun -np 4 ./legion/task_bench -steps $steps -type $t $k -ll:cpu 1 -nodes 4
             fi
-            ./legion/task_bench -steps $steps -type $t $k -and -steps $steps -type $t $k -ll:cpu 2
+            ./legion/task_bench -steps $steps -type $t $k -and -steps $steps -type $t $k -ll:cpu 2 -nodes 1
         done
     done
 fi
@@ -106,9 +106,9 @@ if [[ $USE_REALM -eq 1 ]]; then
                     ./$variant/task_bench -steps $steps -type $t $k -ll:cpu 2 $option
                     ./$variant/task_bench -steps $steps -type $t $k -ll:cpu 4 $option
                     if [[ $USE_GASNET -eq 1 ]]; then
-                        mpirun -np 2 ./$variant/task_bench -steps $steps -type $t $k -ll:cpu 1 $option
-                        mpirun -np 2 ./$variant/task_bench -steps $steps -type $t $k -ll:cpu 2 $option
-                        mpirun -np 4 ./$variant/task_bench -steps $steps -type $t $k -ll:cpu 1 $option
+                        mpirun -np 2 ./$variant/task_bench -steps $steps -type $t $k -ll:cpu 1 $option -nodes 2
+                        mpirun -np 2 ./$variant/task_bench -steps $steps -type $t $k -ll:cpu 2 $option -nodes 2
+                        mpirun -np 4 ./$variant/task_bench -steps $steps -type $t $k -ll:cpu 1 $option -nodes 4
                     fi
                     ./$variant/task_bench -steps $steps -type $t $k -and -steps $steps -type $t $k -ll:cpu 2 $option
                 done
@@ -119,9 +119,9 @@ if [[ $USE_REALM -eq 1 ]]; then
             ./realm_old/task_bench -steps 9 -type $t $k -ll:cpu 2
             ./realm_old/task_bench -steps 9 -type $t $k -ll:cpu 4
             if [[ $USE_GASNET -eq 1 ]]; then
-                mpirun -np 2 ./realm_old/task_bench -steps 9 -type $t $k -ll:cpu 1
-                mpirun -np 2 ./realm_old/task_bench -steps 9 -type $t $k -ll:cpu 2
-                mpirun -np 4 ./realm_old/task_bench -steps 9 -type $t $k -ll:cpu 1
+                mpirun -np 2 ./realm_old/task_bench -steps 9 -type $t $k -ll:cpu 1 -nodes 2
+                mpirun -np 2 ./realm_old/task_bench -steps 9 -type $t $k -ll:cpu 2 -nodes 2
+                mpirun -np 4 ./realm_old/task_bench -steps 9 -type $t $k -ll:cpu 1 -nodes 4
             fi
             ./realm_old/task_bench -steps 9 -type $t $k -and -steps 9 -type $t $k -ll:cpu 2
         done
@@ -139,15 +139,19 @@ if [[ $USE_REGENT -eq 1 ]]; then
 fi
 
 if [[ $USE_STARPU -eq 1 ]]; then
+    export STARPU_RESERVE_NCPU=1
     for t in "${basic_types[@]}"; do
         for k in "${kernels[@]}"; do
-            mpirun -np 1 ./starpu/main -steps $steps -type $t $k -core 2
-            mpirun -np 4 ./starpu/main -steps $steps -type $t $k -p 1 -core 2
-            mpirun -np 4 ./starpu/main -steps $steps -type $t $k -p 2 -core 2
-            mpirun -np 4 ./starpu/main -steps $steps -type $t $k -p 4 -core 2
-            mpirun -np 1 ./starpu/main -steps $steps -type $t $k -and -steps $steps -type $t $k -core 2
-            mpirun -np 4 ./starpu/main -steps 16 -width 8 -type $t $k -p 1 -core 2 -S
-            mpirun -np 4 ./starpu/main -steps 16 -width 8 -type $t $k -and -steps 16 -width 8 -type $t $k -core 2 -p 1 -S
+            for binary in main main_expl; do
+                mpirun -np 1 ./starpu/$binary -steps $steps -type $t $k -core 2 -nodes 1
+                mpirun -np 4 ./starpu/$binary -steps $steps -type $t $k -p 1 -core 2 -nodes 4
+                mpirun -np 4 ./starpu/$binary -steps $steps -type $t $k -p 2 -core 2 -nodes 4
+                mpirun -np 4 ./starpu/$binary -field 4 -steps $steps -type $t $k -p 2 -core 2 -nodes 4
+                mpirun -np 4 ./starpu/$binary -steps $steps -type $t $k -p 4 -core 2 -nodes 4
+                mpirun -np 1 ./starpu/$binary -steps $steps -type $t $k -and -steps $steps -type $t $k -core 2 -nodes 1
+                mpirun -np 4 ./starpu/$binary -steps 16 -width 8 -type $t $k -p 1 -core 2 -S -nodes 4
+                mpirun -np 4 ./starpu/$binary -steps 16 -width 8 -type $t $k -and -steps 16 -width 8 -type $t $k -core 2 -p 1 -S -nodes 4
+            done
         done
     done
 fi
@@ -155,12 +159,26 @@ fi
 if [[ $USE_PARSEC -eq 1 ]]; then
     for t in "${basic_types[@]}"; do
         for k in "${kernels[@]}"; do
-            mpirun -np 1 ./parsec/main -steps $steps -type $t $k -c 2
-            mpirun -np 4 ./parsec/main -steps $steps -type $t $k -p 1 -c 2
-            mpirun -np 4 ./parsec/main -steps $steps -type $t $k -p 2 -c 2
-            mpirun -np 4 ./parsec/main -steps $steps -type $t $k -p 4 -c 2
-            mpirun -np 1 ./parsec/main -steps $steps -type $t $k -and -steps $steps -type $t $k -c 2
+            mpirun -np 1 ./parsec/main_shard -steps $steps -type $t $k -c 2 -p 1 -nodes 1
+            mpirun -np 4 ./parsec/main_shard -width 16 -steps $steps -type $t $k -p 1 -c 2 -S 4 -nodes 4
+            mpirun -np 1 ./parsec/main_shard -steps $steps -type $t $k -and -steps $steps -type $t $k -c 2 -p 1 -nodes 1
+            mpirun -np 1 ./parsec/main_buffer -steps $steps -type $t $k -c 2 -nodes 1
+            mpirun -np 4 ./parsec/main_buffer -steps $steps -type $t $k -p 1 -c 2 -nodes 4
+            mpirun -np 4 ./parsec/main_buffer -steps $steps -type $t $k -p 2 -c 2 -nodes 4
+            mpirun -np 4 ./parsec/main_buffer -steps $steps -type $t $k -p 4 -c 2 -nodes 4
+            mpirun -np 1 ./parsec/main_buffer -steps $steps -type $t $k -and -steps $steps -type $t $k -c 2 -nodes 1
+            mpirun -np 1 ./parsec/main_dtd -steps $steps -type $t $k -c 2 -nodes 1
+            mpirun -np 4 ./parsec/main_dtd -steps $steps -type $t $k -p 1 -c 2 -nodes 4
+            mpirun -np 4 ./parsec/main_dtd -steps $steps -type $t $k -p 2 -c 2 -nodes 4
+            mpirun -np 4 ./parsec/main_dtd -steps $steps -type $t $k -p 4 -c 2 -nodes 4
+            mpirun -np 1 ./parsec/main_dtd -steps $steps -type $t $k -and -steps $steps -type $t $k -c 2 -nodes 1
         done
+    done
+    for k in "${kernels[@]}"; do
+        mpirun -np 2 ./parsec/main_ptg -p 1 -S 4 -c 2 -steps $steps -type stencil_1d $k -width 8 -field 2 -nodes 2
+        mpirun -np 2 ./parsec/main_ptg -p 1 -S 4 -c 2 -steps $steps -type stencil_1d $k -width 8 -and -steps $steps -type stencil_1d $k -width 8 -nodes 2
+        mpirun -np 2 ./parsec/main_ptg -p 1 -S 4 -c 2 -steps $steps -type nearest -radix 5 $k -width 8 -field 2 -nodes 2
+        mpirun -np 2 ./parsec/main_ptg -p 1 -S 4 -c 2 -steps $steps -type nearest -radix 5 $k -width 8 -and -steps $steps -type nearest -radix 5 $k -width 8 -nodes 2
     done
 fi
 
@@ -173,6 +191,19 @@ if [[ $USE_CHARM -eq 1 ]]; then
     done
     rm charmrun.*
 fi
+
+(if [[ $USE_HPX -eq 1 ]]; then
+    source "$HPX_DIR"/env.sh
+
+    for t in "${extended_types[@]}"; do
+        for k in "${kernels[@]}"; do
+            mpirun -np 1 ./hpx/bin/hpx_distributed -steps $steps -type $t $k
+            mpirun -np 2 ./hpx/bin/hpx_distributed -steps $steps -type $t $k
+            mpirun -np 4 ./hpx/bin/hpx_distributed -steps $steps -type $t $k
+            mpirun -np 4 ./hpx/bin/hpx_distributed -steps $steps -type $t $k  -and -steps $steps -type $t $k
+        done
+    done
+fi)
 
 if [[ $USE_CHAPEL -eq 1 ]]; then
     for t in "${extended_types[@]}"; do
@@ -188,10 +219,10 @@ fi
 
     for t in "${extended_types[@]}"; do
         for k in "${kernels[@]}"; do
-            mpirun -np 1 ./x10/main -steps $steps -type $t $k
-            mpirun -np 2 ./x10/main -steps $steps -type $t $k
-            mpirun -np 4 ./x10/main -steps $steps -type $t $k
-            mpirun -np 4 ./x10/main -steps $steps -type $t $k -and -steps $steps -type $t $k
+            mpirun -np 1 ./x10/main -steps $steps -type $t $k -nodes 1
+            mpirun -np 2 ./x10/main -steps $steps -type $t $k -nodes 2
+            mpirun -np 4 ./x10/main -steps $steps -type $t $k -nodes 4
+            mpirun -np 4 ./x10/main -steps $steps -type $t $k -and -steps $steps -type $t $k -nodes 4
         done
     done
 fi)
@@ -215,6 +246,15 @@ if [[ $USE_OMPSS -eq 1 ]]; then
     done
 fi
 
+if [[ $USE_OMPSS2 -eq 1 ]]; then
+    for t in "${basic_types[@]}"; do
+        for k in "${kernels[@]}"; do
+            taskset -c 0-1 ./ompss2/main -steps $steps -type $t $k
+            taskset -c 0-1 ./ompss2/main -steps $steps -type $t $k -and -steps $steps -type $t $k
+        done
+    done
+fi
+
 (if [[ $USE_SPARK -eq 1 ]]; then
     source "$SPARK_DIR"/env.sh
 
@@ -227,10 +267,10 @@ fi
     export LD_LIBRARY_PATH="$CORE_DIR:$SPARK_PROJ_DIR:$LD_LIBRARY_PATH"
 
     # These tests require a running ssh server that allows
-    # passwordless connections to localhost. On Travis we do this by
+    # passwordless connections to localhost. On CI we do this by
     # setting up a passwordless SSH key. However, these are not
     # changes I'm comfortable making to an arbitrary user's machine.
-    if [[ -n $TRAVIS ]]; then
+    if [[ -n $GITHUB_ACTIONS ]]; then
         ssh-keygen -N "" -f "$HOME/.ssh/id_rsa"
         cat "$HOME/.ssh/id_rsa.pub" >> "$HOME/.ssh/authorized_keys"
         echo "id_rsa.pub:"

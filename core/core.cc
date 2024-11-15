@@ -528,8 +528,6 @@ size_t TaskGraph::dependencies(long dset, long point, std::pair<long, long> *dep
 
 size_t TaskGraph::num_dependencies(long dset, long point) const
 {
-  size_t count = 0;
-
   switch (dependence) {
   case DependenceType::TRIVIAL:
     return 0;
@@ -598,6 +596,14 @@ void TaskGraph::execute_point(long timestep, long point,
 
           const std::pair<long, long> *input = reinterpret_cast<const std::pair<long, long> *>(input_ptr[idx]);
           for (size_t i = 0; i < input_bytes[idx]/sizeof(std::pair<long, long>); ++i) {
+#ifdef DEBUG_CORE
+            if (input[i].first != timestep - 1 || input[i].second != dep) {
+              printf("ERROR: Task Bench detected corrupted value in task (graph %ld timestep %ld point %ld) input %ld\n  At position %lu within the buffer, expected value (timestep %ld point %ld) but got (timestep %ld point %ld)\n",
+                     graph_index, timestep, point, idx,
+                     i, timestep - 1, dep, input[i].first, input[i].second);
+              fflush(stdout);
+            }
+#endif
             assert(input[i].first == timestep - 1);
             assert(input[i].second == dep);
           }
@@ -694,6 +700,7 @@ static void needs_argument(int i, int argc, const char *flag) {
 #define CUDA_UNROLL_FLAG "-cuda_unroll"
 #endif
 
+#define NODES_FLAG "-nodes"
 #define SKIP_GRAPH_VALIDATION_FLAG "-skip-graph-validation"
 #define FIELD_FLAG "-field"
 
@@ -702,6 +709,7 @@ static void show_help_message(int argc, char **argv) {
 
   printf("\nGeneral options:\n");
   printf("  %-18s show this help message and exit\n", "-h");
+  printf("  %-18s number of nodes to use for estimating transfer statistics\n", NODES_FLAG);
   printf("  %-18s enable verbose output\n", "-v");
   printf("  %-18s enable extra verbose output\n", "-vv");
 
@@ -738,7 +746,8 @@ static void show_help_message(int argc, char **argv) {
 }
 
 App::App(int argc, char **argv)
-  : verbose(0)
+  : nodes(0)
+  , verbose(0)
   , enable_graph_validation(true)
 {
   TaskGraph graph = default_graph(graphs.size());
@@ -748,6 +757,16 @@ App::App(int argc, char **argv)
     if (!strcmp(argv[i], "-h")) {
       show_help_message(argc, argv);
       exit(0);
+    }
+
+    if (!strcmp(argv[i], NODES_FLAG)) {
+      needs_argument(i, argc, NODES_FLAG);
+      long value = atol(argv[++i]);
+      if (value <= 0) {
+        fprintf(stderr, "error: Invalid flag \"" NODES_FLAG " %ld\" must be > 0\n", value);
+        abort();
+      }
+      nodes = value;
     }
 
     if (!strcmp(argv[i], "-v")) {
@@ -1072,8 +1091,7 @@ void App::display() const
         }
         printf("\n");
 
-        printf("        Dependencies:\n",
-               t, offset, width);
+        printf("        Dependencies:\n");
         for (long p = offset; p < offset + width; ++p) {
           printf("          Point %ld:", p);
           auto deps = g.dependencies(dset, p);
@@ -1087,8 +1105,7 @@ void App::display() const
           printf("\n");
         }
         if (verbose > 1) {
-          printf("        Reverse Dependencies:\n",
-                 t, last_offset, last_width);
+          printf("        Reverse Dependencies:\n");
           for (long p = last_offset; p < last_offset + last_width; ++p) {
             printf("          Point %ld:", p);
             auto deps = g.reverse_dependencies(dset, p);
@@ -1207,48 +1224,106 @@ static long long count_bytes(const TaskGraph &g)
   return bytes;
 }
 
+static std::tuple<long, long> clamp(long start, long end, long min_value, long max_value) {
+  if (end < min_value) {
+    return std::tuple<long, long>(min_value, min_value - 1);
+  } else if (start > max_value) {
+    return std::tuple<long, long>(max_value, max_value - 1);
+  } else {
+    return std::tuple<long, long>(std::max(start, min_value), std::min(end, max_value));
+  }
+}
+
 void App::report_timing(double elapsed_seconds) const
 {
   long long total_num_tasks = 0;
   long long total_num_deps = 0;
+  long long total_local_deps = 0;
+  long long total_nonlocal_deps = 0;
   long long flops = 0;
   long long bytes = 0;
+  long long local_transfer = 0;
+  long long nonlocal_transfer = 0;
   for (auto g : graphs) {
     long long num_tasks = 0;
     long long num_deps = 0;
+    long long local_deps = 0;
+    long long nonlocal_deps = 0;
 #ifdef DEBUG_CORE
     if (enable_graph_validation) {
-      assert(has_executed_graph.load() & (1 << g.graph_index) != 0);
+      assert((has_executed_graph.load() & (1 << g.graph_index)) != 0);
     }
 #endif
     for (long t = 0; t < g.timesteps; ++t) {
       long offset = g.offset_at_timestep(t);
       long width = g.width_at_timestep(t);
+      long last_offset = g.offset_at_timestep(t-1);
+      long last_width = g.width_at_timestep(t-1);
       long dset = g.dependence_set_at_timestep(t);
 
       num_tasks += width;
 
       for (long p = offset; p < offset + width; ++p) {
+        long point_node = 0;
+        long node_first = 0;
+        long node_last = -1;
+        if (nodes > 0) {
+          point_node = p*nodes/g.max_width;
+          node_first = point_node * g.max_width / nodes;
+          node_last = (point_node + 1) * g.max_width / nodes - 1;
+        }
+
         auto deps = g.dependencies(dset, p);
         for (auto dep : deps) {
-          num_deps += dep.second - dep.first + 1;
+          long dep_first, dep_last;
+          std::tie(dep_first, dep_last) = clamp(dep.first, dep.second, last_offset, last_offset + last_width - 1);
+          num_deps += dep_last - dep_first + 1;
+          if (nodes > 0) {
+            long initial_first, initial_last, local_first, local_last, final_first, final_last;
+            std::tie(initial_first, initial_last) = clamp(dep_first, dep_last, 0, node_first - 1);
+            std::tie(local_first, local_last) = clamp(dep_first, dep_last, node_first, node_last);
+            std::tie(final_first, final_last) = clamp(dep_first, dep_last, node_last + 1, g.max_width - 1);
+            nonlocal_deps += initial_last - initial_first + 1;
+            local_deps += local_last - local_first + 1;
+            nonlocal_deps += final_last - final_first + 1;
+          }
         }
       }
     }
 
     total_num_tasks += num_tasks;
     total_num_deps += num_deps;
+    total_local_deps += local_deps;
+    total_nonlocal_deps += nonlocal_deps;
     flops += count_flops(g);
     bytes += count_bytes(g);
+    local_transfer += local_deps * g.output_bytes_per_task;
+    nonlocal_transfer += nonlocal_deps * g.output_bytes_per_task;
   }
 
   printf("Total Tasks %lld\n", total_num_tasks);
   printf("Total Dependencies %lld\n", total_num_deps);
+  if (nodes > 0) {
+    printf("  Local Dependencies %lld (estimated)\n", total_local_deps);
+    printf("  Nonlocal Dependencies %lld (estimated)\n", total_nonlocal_deps);
+    printf("  Number of Nodes (used for estimate) %ld\n", nodes);
+  } else {
+    printf("  Unable to estimate local/nonlocal dependencies\n");
+  }
   printf("Total FLOPs %lld\n", flops);
   printf("Total Bytes %lld\n", bytes);
   printf("Elapsed Time %e seconds\n", elapsed_seconds);
   printf("FLOP/s %e\n", flops/elapsed_seconds);
   printf("B/s %e\n", bytes/elapsed_seconds);
+  printf("Transfer (estimated):\n");
+  if (nodes > 0) {
+    printf("  Local Bytes %lld\n", local_transfer);
+    printf("  Nonlocal Bytes %lld\n", nonlocal_transfer);
+    printf("  Local Bandwidth %e B/s\n", local_transfer/elapsed_seconds);
+    printf("  Nonlocal Bandwidth %e B/s\n", nonlocal_transfer/elapsed_seconds);
+  } else {
+    printf("  Unable to estimate local/nonlocal transfer\n");
+  }
 
 #ifdef DEBUG_CORE
   printf("Task Graph Execution Mask %llx\n", has_executed_graph.load());

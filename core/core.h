@@ -74,6 +74,7 @@ struct TaskGraph : public task_graph_t {
 
 struct App {
   std::vector<TaskGraph> graphs;
+  long nodes;
   int verbose;
   bool enable_graph_validation;
 

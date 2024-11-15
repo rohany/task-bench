@@ -1,4 +1,4 @@
-# A Task Benchmark [![Build Status](https://travis-ci.org/StanfordLegion/task-bench.svg?branch=master)](https://travis-ci.org/StanfordLegion/task-bench)
+# A Task Benchmark [![CI](https://github.com/StanfordLegion/task-bench/actions/workflows/main.yml/badge.svg)](https://github.com/StanfordLegion/task-bench/actions/workflows/main.yml)
 
 **Please contact the authors before publishing any results obtained
 with Task Bench.**
@@ -6,7 +6,7 @@ with Task Bench.**
 Corresponding authors:
 
   * Elliott Slaughter <slaughter@cs.stanford.edu>
-  * Wei Wu <wwu@lanl.gov>
+  * Wei Wu <weiwu@nvidia.com>
 
 Task Bench is a configurable benchmark for evaluating the efficiency
 and performance of parallel and distributed programming models,
@@ -25,6 +25,7 @@ Implementations:
 [Charm++](charm++),
 [Chapel](chapel),
 [Dask](dask),
+[HPX](hpx),
 [Legion](legion),
 [MPI](mpi),
 [MPI+OpenMP](mpi_openmp),

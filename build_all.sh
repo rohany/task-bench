@@ -105,10 +105,10 @@ if [[ $USE_REGENT -eq 1 ]]; then
             export CXX=c++
         fi
         unset LG_RT_DIR
-        if [[ -z $TRAVIS ]]; then
-            ./scripts/setup_env.py --terra-url https://github.com/StanfordLegion/terra.git --terra-branch luajit2.1 --llvm-version=38 --terra-cmake -j$THREADS
+        if [[ -z $GITHUB_ACTIONS ]]; then
+            ./scripts/setup_env.py -j$THREADS
         else
-            ./install.py --terra-url https://github.com/StanfordLegion/terra.git --terra-branch luajit2.1 --rdir=auto
+            ./install.py --rdir=auto
         fi
     )
     popd
@@ -139,7 +139,7 @@ fi
 )
 
 if [[ $USE_STARPU -eq 1 ]]; then
-    STARPU_CONFIGURE_FLAG="--disable-cuda --disable-opencl --disable-fortran --disable-build-tests --disable-build-examples "
+    STARPU_CONFIGURE_FLAG="--disable-cuda --disable-opencl --disable-fortran --disable-build-tests --disable-build-examples --disable-mlr --disable-hdf5 --enable-fast --enable-maxnodes=1"
     if [[ $TASKBENCH_USE_HWLOC -eq 1 ]]; then
       STARPU_CONFIGURE_FLAG+=""
     else
@@ -158,9 +158,9 @@ if [[ $USE_PARSEC -eq 1 ]]; then
     mkdir -p "$PARSEC_DIR"
     pushd "$PARSEC_DIR"
     if [[ $TASKBENCH_USE_HWLOC -eq 1 ]]; then
-      ../contrib/platforms/config.linux -DPARSEC_GPU_WITH_CUDA=OFF -DCMAKE_INSTALL_PREFIX=$PWD -DHWLOC_DIR=$HWLOC_DIR
+      ../configure --prefix=$PWD --with-mpi --with-hwloc=$HWLOC_DIR --disable-debug
     else
-      ../contrib/platforms/config.linux -DPARSEC_GPU_WITH_CUDA=OFF -DCMAKE_INSTALL_PREFIX=$PWD
+      ../configure --prefix=$PWD --with-mpi --disable-debug --with-cuda=no
     fi
     make -j$THREADS
     make install
@@ -190,12 +190,73 @@ fi
      )
 fi)
 
+(if [[ $USE_HPX -eq 1 ]]; then
+    source "$HPX_DIR"/env.sh
+
+    pushd $HWLOC_SRC_DIR
+    if [[ ! -d build ]]; then
+        mkdir build
+        cd build
+        ../configure --prefix=$HPX_INSTALL_ROOT/hwloc --disable-opencl
+        make -j$THREADS
+        make install
+    fi
+    popd
+
+    pushd $JEMALLOC_SRC_DIR
+    if [[ ! -d build ]]; then
+        ./autogen.sh
+        mkdir build
+        cd build
+        ../configure --prefix=$HPX_INSTALL_ROOT/jemalloc
+        make -j$THREADS
+        make install
+    fi
+    popd
+
+    pushd $HPX_SOURCE_ROOT/hpx
+    if [[ ! -d build ]]; then
+        mkdir build
+        cd build
+
+        cmake .. \
+            -DCMAKE_INSTALL_PREFIX=$HPX_INSTALL_ROOT/hpx \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHPX_WITH_PKGCONFIG=OFF \
+            -DHPX_WITH_FETCH_ASIO=ON \
+            -DHPX_WITH_PARCELPORT_MPI=ON \
+            -DHPX_WITH_PARCELPORT_TCP=OFF \
+            -DHPX_WITH_EXAMPLES=OFF \
+            -DHPX_WITH_MALLOC=jemalloc \
+            -DHWLOC_ROOT=$HPX_INSTALL_ROOT/hwloc \
+            -DJEMALLOC_ROOT=$HPX_INSTALL_ROOT/jemalloc
+            # -DBOOST_ROOT=$HPX_INSTALL_ROOT/boost \
+
+        make -j$THREADS
+        make install
+    fi
+    popd
+
+    pushd hpx
+    if [[ ! -d build ]]; then
+        mkdir build
+        cd build
+
+        cmake .. -DCMAKE_PREFIX_PATH=$HPX_INSTALL_ROOT/hpx -DCMAKE_INSTALL_PREFIX=$PWD/..
+    else
+        cd build
+    fi
+    make -j$THREADS
+    make install
+    popd
+fi)
+
 (if [[ $USE_CHAPEL -eq 1 ]]; then
     if [[ -n $CRAYPE_VERSION ]]; then
         module load craype-hugepages16M
     fi
 
-    export PATH="$CHPL_HOME/bin/$CHPL_HOST_PLATFORM:$PATH"
+    export PATH="$CHPL_HOME/bin/$CHPL_HOST_PLATFORM-$CHPL_HOST_ARCH:$PATH"
     pushd "$CHPL_HOME"
     make -j$THREADS
     popd
@@ -253,6 +314,34 @@ if [[ $USE_OMPSS -eq 1 ]]; then
     export LD_LIBRARY_PATH=$NANOS_PREFIX/lib:$MERCURIUM_PREFIX/lib:$LD_LIBRARY_PATH
     make -C ompss clean
     make -C ompss -j$THREADS
+fi
+
+if [[ $USE_OMPSS2 -eq 1 ]]; then
+    # pushd "$BOOST_SRC_DIR"
+    # ./bootstrap.sh --prefix=$OMPSS2_TARGET
+    # ./b2 install
+    # popd
+
+    pushd "$OMPSS2_NANOS6_SRC_DIR"
+    autoreconf -fiv
+    mkdir -p build
+    cd build
+    PKG_CONFIG_PATH=$HWLOC_DIR/lib/pkgconfig ../configure --prefix=$OMPSS2_TARGET --with-boost=/usr
+    make all -j$THREADS
+    make install -j$THREADS
+    popd
+    
+    pushd "$OMPSS2_MCXX_SRC_DIR"
+    autoreconf -fiv
+    mkdir -p build
+    cd build
+    ../configure --prefix=$OMPSS2_TARGET --enable-ompss-2 --with-nanos6=$OMPSS2_TARGET
+    make -j$THREADS
+    make install
+    popd
+
+    make -C ompss2 clean
+    make -C ompss2 -j$THREADS
 fi
 
 (if [[ $USE_SPARK -eq 1 ]]; then
@@ -358,7 +447,7 @@ fi)
         if [[ ! -d build ]]; then
             mkdir build
             cd build
-            ../configure --prefix="$SWIFT_PREFIX"
+            ../configure --prefix="$SWIFT_PREFIX" --without-tcsetpgrp
             make -j$THREADS
             make install
         fi
@@ -382,14 +471,11 @@ EOF
         export PATH="$PWD"/cc-wrapper:"$PATH"
     fi
 
-    pushd swift-t-1.4
+    pushd swift-t-1.5.0
     if [[ ! -f ./dev/build/swift-t-settings.sh ]]; then
         ./dev/build/init-settings.sh
         sed -i 's@SWIFT_T_PREFIX=/tmp/swift-t-install@SWIFT_T_PREFIX='"$SWIFT_PREFIX"'@g' ./dev/build/swift-t-settings.sh
-        sed -i 's@# TCLSH_LOCAL=/usr/bin/tclsh@TCLSH_LOCAL='"$SWIFT_PREFIX"'/bin/tclsh8.6@g' ./dev/build/swift-t-settings.sh
-        sed -i 's@# TCL_LIB_DIR=/path/to/tcl/lib@TCL_LIB_DIR='"$SWIFT_PREFIX"'/lib@g' ./dev/build/swift-t-settings.sh
-        sed -i 's@# TCL_INCLUDE_DIR=/path/to/tcl/include@TCL_INCLUDE_DIR='"$SWIFT_PREFIX"'/include@g' ./dev/build/swift-t-settings.sh
-        sed -i 's@# TCL_SYSLIB_DIR=/path/to/tcl/lib@TCL_SYSLIB_DIR='"$SWIFT_PREFIX"'/lib@g' ./dev/build/swift-t-settings.sh
+        sed -i 's@# TCLSH_INSTALL=/usr/bin/tclsh@TCLSH_INSTALL='"$SWIFT_PREFIX"'@g' ./dev/build/swift-t-settings.sh
         sed -i 's@# export JAVA_HOME=@export JAVA_HOME='"$JAVA_HOME"'@g' ./dev/build/swift-t-settings.sh
         sed -i 's@# export ANT_HOME=@export ANT_HOME='"$ANT_HOME"'@g' ./dev/build/swift-t-settings.sh
         sed -i 's@MAKE_PARALLELISM=1@MAKE_PARALLELISM='"$THREADS"'@g' ./dev/build/swift-t-settings.sh
@@ -413,9 +499,8 @@ EOF
         export CRAY_ARGS="--with-launcher=/usr/bin/srun"
     fi
 
-    ./dev/build/build-all.sh
-    find "$SWIFT_PREFIX"/stc -type f -exec sed -i 's@#!/bin/zsh@'"#!$SWIFT_PREFIX"'/bin/zsh@g' {} +
-    find "$SWIFT_PREFIX"/turbine -type f -exec sed -i 's@#!/bin/zsh@'"#!$SWIFT_PREFIX"'/bin/zsh@g' {} +
+    find ./dev/build -type f -exec sed -i 's@#!/bin/zsh@'"#!$SWIFT_PREFIX"'/bin/zsh@g' {} +
+    ./dev/build/build-swift-t.sh
     popd
 
     popd
