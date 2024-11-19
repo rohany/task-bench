@@ -561,7 +561,8 @@ void TaskGraph::execute_point(long timestep, long point,
                               char *output_ptr, size_t output_bytes,
                               const char **input_ptr, const size_t *input_bytes,
                               size_t n_inputs,
-                              char *scratch_ptr, size_t scratch_bytes) const
+                              char *scratch_ptr, size_t scratch_bytes,
+			      void* stream, uint64_t gpuid) const
 {
 #ifdef DEBUG_CORE
   // Validate graph_index
@@ -570,72 +571,75 @@ void TaskGraph::execute_point(long timestep, long point,
 #endif
 
   // Validate timestep and point
-  assert(0 <= timestep && timestep < timesteps);
+  // assert(0 <= timestep && timestep < timesteps);
 
   long offset = offset_at_timestep(timestep);
   long width = width_at_timestep(timestep);
-  assert(offset <= point && point < offset+width);
+  // assert(offset <= point && point < offset+width);
 
-  long last_offset = offset_at_timestep(timestep-1);
-  long last_width = width_at_timestep(timestep-1);
+  // long last_offset = offset_at_timestep(timestep-1);
+  // long last_width = width_at_timestep(timestep-1);
 
   // Validate input
-  {
-    size_t idx = 0;
-    long dset = dependence_set_at_timestep(timestep);
-    size_t max_deps = num_dependencies(dset, point);
-    std::pair<long, long> *deps = reinterpret_cast<std::pair<long, long> *>(alloca(sizeof(std::pair<long, long>) * max_deps));
-    size_t num_deps = dependencies(dset, point, deps);
-    for (size_t span = 0; span < num_deps; span++) {
-      for (long dep = deps[span].first; dep <= deps[span].second; dep++) {
-        if (last_offset <= dep && dep < last_offset + last_width) {
-          assert(idx < n_inputs);
-
-          assert(input_bytes[idx] == output_bytes_per_task);
-          assert(input_bytes[idx] >= sizeof(std::pair<long, long>));
-
-          const std::pair<long, long> *input = reinterpret_cast<const std::pair<long, long> *>(input_ptr[idx]);
-          for (size_t i = 0; i < input_bytes[idx]/sizeof(std::pair<long, long>); ++i) {
-#ifdef DEBUG_CORE
-            if (input[i].first != timestep - 1 || input[i].second != dep) {
-              printf("ERROR: Task Bench detected corrupted value in task (graph %ld timestep %ld point %ld) input %ld\n  At position %lu within the buffer, expected value (timestep %ld point %ld) but got (timestep %ld point %ld)\n",
-                     graph_index, timestep, point, idx,
-                     i, timestep - 1, dep, input[i].first, input[i].second);
-              fflush(stdout);
-            }
-#endif
-            assert(input[i].first == timestep - 1);
-            assert(input[i].second == dep);
-          }
-          idx++;
-        }
-      }
-    }
-    // FIXME (Elliott): Legion is currently passing in uninitialized
-    // memory for dependencies outside of the last offset/width.
-    // assert(idx == n_inputs);
-  }
-
-  // Validate output
-  assert(output_bytes == output_bytes_per_task);
-  assert(output_bytes >= sizeof(std::pair<long, long>));
-
-  // Generate output
-  std::pair<long, long> *output = reinterpret_cast<std::pair<long, long> *>(output_ptr);
-  for (size_t i = 0; i < output_bytes/sizeof(std::pair<long, long>); ++i) {
-    output[i].first = timestep;
-    output[i].second = point;
-  }
-
-  // Validate scratch
-  assert(scratch_bytes == scratch_bytes_per_task);
-  if (scratch_bytes > 0) {
-    uint64_t *scratch = reinterpret_cast<uint64_t *>(scratch_ptr);
-    assert(*scratch == MAGIC_VALUE);
-  }
+//   {
+//     size_t idx = 0;
+//     long dset = dependence_set_at_timestep(timestep);
+//     size_t max_deps = num_dependencies(dset, point);
+//     std::pair<long, long> *deps = reinterpret_cast<std::pair<long, long> *>(alloca(sizeof(std::pair<long, long>) * max_deps));
+//     size_t num_deps = dependencies(dset, point, deps);
+//     for (size_t span = 0; span < num_deps; span++) {
+//       for (long dep = deps[span].first; dep <= deps[span].second; dep++) {
+//         if (last_offset <= dep && dep < last_offset + last_width) {
+//           assert(idx < n_inputs);
+// 
+//           assert(input_bytes[idx] == output_bytes_per_task);
+//           assert(input_bytes[idx] >= sizeof(std::pair<long, long>));
+// 
+//           const std::pair<long, long> *input = reinterpret_cast<const std::pair<long, long> *>(input_ptr[idx]);
+//           for (size_t i = 0; i < input_bytes[idx]/sizeof(std::pair<long, long>); ++i) {
+// #ifdef DEBUG_CORE
+//             if (input[i].first != timestep - 1 || input[i].second != dep) {
+//               printf("ERROR: Task Bench detected corrupted value in task (graph %ld timestep %ld point %ld) input %ld\n  At position %lu within the buffer, expected value (timestep %ld point %ld) but got (timestep %ld point %ld)\n",
+//                      graph_index, timestep, point, idx,
+//                      i, timestep - 1, dep, input[i].first, input[i].second);
+//               fflush(stdout);
+//             }
+// #endif
+//             assert(input[i].first == timestep - 1);
+//             assert(input[i].second == dep);
+//           }
+//           idx++;
+//         }
+//       }
+//     }
+//     // FIXME (Elliott): Legion is currently passing in uninitialized
+//     // memory for dependencies outside of the last offset/width.
+//     // assert(idx == n_inputs);
+//   }
+// 
+//   // Validate output
+//   assert(output_bytes == output_bytes_per_task);
+//   assert(output_bytes >= sizeof(std::pair<long, long>));
+// 
+//   // Generate output
+//   std::pair<long, long> *output = reinterpret_cast<std::pair<long, long> *>(output_ptr);
+//   for (size_t i = 0; i < output_bytes/sizeof(std::pair<long, long>); ++i) {
+//     output[i].first = timestep;
+//     output[i].second = point;
+//   }
+// 
+//   // Validate scratch
+//   assert(scratch_bytes == scratch_bytes_per_task);
+//   if (scratch_bytes > 0) {
+//     uint64_t *scratch = reinterpret_cast<uint64_t *>(scratch_ptr);
+//     assert(*scratch == MAGIC_VALUE);
+//   }
 
   // Execute kernel
-  Kernel k(kernel);
+  auto kernelm = kernel;
+  kernelm.stream = stream;
+  kernelm.gpuid = gpuid;
+  Kernel k(kernelm);
   k.execute(graph_index, timestep, point, scratch_ptr, scratch_bytes);
 }
 
@@ -981,9 +985,9 @@ App::App(int argc, char **argv)
   
   check();
   
-#ifdef ENABLE_CUDA
-  init_cuda_support(graphs);
-#endif
+// #ifdef ENABLE_CUDA
+//   init_cuda_support(graphs);
+// #endif
 }
 
 void App::check() const

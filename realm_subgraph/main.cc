@@ -20,13 +20,18 @@
 #include <vector>
 
 #include <float.h>
+#include <mutex>
 
 #include "realm.h"
+#include "realm/cuda/cuda_module.h"
 
 #include "core.h"
+#include "cuda_kernel.h"
 
 using namespace Realm;
 using namespace Realm::Serialization;
+
+std::mutex printlock;
 
 TYPE_IS_SERIALIZABLE(TaskGraph);
 
@@ -38,6 +43,7 @@ enum {
   TOP_LEVEL_TASK = Processor::TASK_ID_FIRST_AVAILABLE,
   SHARD_TASK,
   LEAF_TASK,
+  INIT_TASK,
 };
 
 enum {
@@ -215,8 +221,23 @@ static long lcm(long a, long b) {
   return a * b / ::gcd(a, b);
 }
 
+// static std::unordered_map<Processor, void*> buffers;
+
+void init_gpu_task(const void *args, size_t arglen, const void *userdata,
+               size_t userlen, Processor p, CUstream_st* stream) {
+  InitArgs a;
+  {
+    FixedBufferDeserializer ser(args, arglen);
+    ser >> a;
+    assert(ser.bytes_left() == 0);
+  }
+  std::vector<TaskGraph> graphs(1, a.graph);
+  init_cuda_support(graphs, p.id);
+  std::cout << "Finished GPU initialization on processor: " << p << std::endl;
+}
+
 void leaf_task(const void *args, size_t arglen, const void *userdata,
-               size_t userlen, Processor p)
+               size_t userlen, Processor p, CUstream_st* stream)
 {
   LeafArgs a;
   std::vector<uintptr_t> input_ptr;
@@ -229,10 +250,13 @@ void leaf_task(const void *args, size_t arglen, const void *userdata,
     assert(ser.bytes_left() == 0);
   }
 
+  Cuda::set_task_ctxsync_required(false);
+
+
   a.graph.execute_point(a.timestep, a.point,
                         a.output_ptr, a.output_bytes,
                         (const char **)input_ptr.data(), (size_t *)input_bytes.data(), a.n_inputs,
-                        a.scratch_ptr, a.scratch_bytes);
+                        a.scratch_ptr, a.scratch_bytes, stream, p.id);
 }
 
 static Event define_subgraph(Subgraph &subgraph,
@@ -601,11 +625,14 @@ static Event define_subgraph(Subgraph &subgraph,
     }
   }
 
-  if (replayable) {
-    definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::INSTANTIATION_ORDER;
-  } else {
-    definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::ONE_SHOT;
-  }
+  definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::INSTANTIATION_ORDER;
+  // if (replayable) {
+  // } else {
+  //   definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::ONE_SHOT;
+  // }
+  //
+
+  std::cout << "SUBGRAPH INFO: " << definition.tasks.size() << " " << definition.copies.size() << " " << definition.dependencies.size() << " " << definition.arrivals.size() << std::endl;
 
   return Subgraph::create_subgraph(subgraph, definition, ProfilingRequestSet());
 }
@@ -784,6 +811,7 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
   Barrier last_start = a.last_start;
   Barrier first_stop = a.first_stop;
   Barrier last_stop = a.last_stop;
+  Processor gpu = a.gpu;
 
   // Figure out who we're going to be communicating with.
 
@@ -1238,6 +1266,8 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
   sync.wait();
   sync = sync.advance_barrier();
 
+  std::vector<Subgraph> to_delete;
+
   // Main loop
   unsigned long long start_time = 0, stop_time = 0;
   for (long rep = 0; rep < 1; ++rep) {
@@ -1266,7 +1296,9 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
 
         // Currently we only generate subgraphs for full-width task graphs.
         if (replay) {
-          for (long timestep = start_timestep - 1; timestep < stop_timestep + 1; ++timestep) {
+	  // TODO (rohany): Why was this -1?
+          // for (long timestep = start_timestep - 1; timestep < stop_timestep + 1; ++timestep) {
+          for (long timestep = start_timestep; timestep < stop_timestep + 1; ++timestep) {
             long offset = graph.offset_at_timestep(timestep);
             long width = graph.width_at_timestep(timestep);
             if (offset != 0 || width != graph.max_width) {
@@ -1289,7 +1321,7 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
           // FIXME: Am I actually required to track the ready event of this subgraph??
           current_ready = define_subgraph(current_subgraph,
                                           replay,
-                                          p,
+                                          gpu,
                                           graph, graph_index,
                                           start_timestep, stop_timestep,
                                           first_point, last_point,
@@ -1307,6 +1339,10 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
                                           scratch_ptr,
                                           leaf_buffer,
                                           leaf_bufsize);
+          sync.arrive(1);
+          sync.wait();
+          sync = sync.advance_barrier();
+          start_time = Clock::current_time_in_nanoseconds();
         }
 
         // Replay the subgraph.
@@ -1332,7 +1368,7 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
       }
 
       if (subgraph.exists()) {
-        subgraph.destroy(postcondition);
+	to_delete.push_back(subgraph);
       }
     }
 
@@ -1340,6 +1376,8 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
     events.clear();
 
     stop_time = Clock::current_time_in_nanoseconds();
+    for (auto& sg : to_delete)
+      sg.destroy(Event::NO_EVENT);
   }
 
   first_start.arrive(1, Event::NO_EVENT, &start_time, sizeof(start_time));
@@ -1386,6 +1424,26 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     procs.insert(procs.end(), query.begin(), query.end());
   }
   long num_procs = procs.size();
+  std::vector<Processor> gpus;
+  {
+    Machine::ProcessorQuery query(machine);
+    query.only_kind(Processor::TOC_PROC);
+    gpus.insert(gpus.end(), query.begin(), query.end());
+    assert(gpus.size() == procs.size());
+  }
+
+  // Initialize the GPUs.
+  {
+    Event e = Event::NO_EVENT;
+    for (auto gpu : gpus) {
+      InitArgs a;
+      a.graph = graphs[0];
+      DynamicBufferSerializer ser(4096);
+      ser << a;
+      e = gpu.spawn(INIT_TASK, ser.get_buffer(), ser.bytes_used(), e);
+    }
+    e.wait();
+  }
 
   std::map<Processor, Memory> proc_sysmems;
   std::map<Processor, Memory> proc_regmems;
@@ -1546,6 +1604,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     args.last_start = last_start_bar;
     args.first_stop = first_stop_bar;
     args.last_stop = last_stop_bar;
+    args.gpu = gpus[proc_index];
 
     DynamicBufferSerializer ser(4096);
     ser << args;
@@ -1612,7 +1671,11 @@ int main(int argc, char **argv)
 
   rt.register_task(TOP_LEVEL_TASK, top_level_task);
   rt.register_task(SHARD_TASK, shard_task);
-  rt.register_task(LEAF_TASK, leaf_task);
+  // rt.register_task(LEAF_TASK, leaf_task);
+  // rt.register_task(INIT_TASK, init_task);
+  Processor::register_task_by_kind(Processor::TOC_PROC, false, INIT_TASK, CodeDescriptor(init_gpu_task), ProfilingRequestSet());
+  Processor::register_task_by_kind(Processor::TOC_PROC, false, LEAF_TASK, CodeDescriptor(leaf_task), ProfilingRequestSet());
+
   rt.register_reduction<RedopMin>(REDOP_MIN);
   rt.register_reduction<RedopMax>(REDOP_MAX);
 

@@ -21,10 +21,11 @@ endif
 # Flags for directing the runtime makefile what to include
 DEBUG           ?= 0		# Include debugging symbols
 OUTPUT_LEVEL    ?= LEVEL_DEBUG	# Compile time logging level
-USE_CUDA        ?= 0		# Include CUDA support (requires CUDA)
+USE_CUDA        ?= 1		# Include CUDA support (requires CUDA)
 USE_GASNET      ?= 0		# Include GASNet support (requires GASNet)
 USE_HDF         ?= 0		# Include HDF5 support (requires HDF5)
 ALT_MAPPERS     ?= 0		# Include alternative mappers (not recommended)
+REALM_USE_CUDART_HIJACK ?= 0
 
 # Put the binary file name here
 OUTFILE		?= task_bench
@@ -34,13 +35,14 @@ GEN_GPU_SRC	?=		# .cu files
 
 # You can modify these variables, some will be appended to by the runtime makefile
 INC_FLAGS	?=
-CC_FLAGS	?=
-NVCC_FLAGS	?=
+CC_FLAGS	?= -DENABLE_CUDA
+NVCC_FLAGS	?= -std=c++17
 GASNET_FLAGS	?=
-LD_FLAGS	?=
+LD_FLAGS	?= 
 
-CC_FLAGS += -std=c++11 -I../core
-LD_FLAGS += -L../core -lcore_s
+CC_FLAGS += -std=c++17 -I../core # -fsanitize=address
+LD_FLAGS += -L../core -lcore_s -lcore_cuda_s # -fsanitize=address -static-libasan
+# LD_FLAGS += -L../core -lcore_s 
 
 include ../core/make_blas.mk
 ###########################################################################

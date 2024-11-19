@@ -65,6 +65,8 @@ typedef struct kernel_t {
   int memcpy_required;
   int gpu_id;
   int cuda_unroll;
+  void* stream;
+  uint64_t gpuid;
 #endif
 } kernel_t;
 

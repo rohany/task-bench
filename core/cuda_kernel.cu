@@ -1,8 +1,10 @@
 #include <assert.h>
+#include <unordered_map>
+
 #include "core.h"
 #include "cuda_kernel.h"
 
-std::vector<char*> local_buffer;
+std::unordered_map<uint64_t, char*> local_buffer;
 int nb_local_buffer = 0;
 size_t local_buffer_size;
 cudaStream_t cuda_stream_array[8];
@@ -27,7 +29,7 @@ __global__ void execute_kernel_compute_cuda_kernel_unroll_4(long iter, double *A
 __global__ void execute_kernel_compute_cuda_kernel_unroll_8(long iter, double *A);
 __global__ void execute_kernel_compute_cuda_kernel_unroll_16(long iter, double *A);
 
-void init_cuda_support(const std::vector<TaskGraph> &graphs)
+void init_cuda_support(const std::vector<TaskGraph> &graphs, uint64_t gpuid)
 {
   int nb_gpus = 1;
   
@@ -38,22 +40,25 @@ void init_cuda_support(const std::vector<TaskGraph> &graphs)
   int cuda_unroll = graphs[0].kernel.cuda_unroll;
   printf("init cuda support nb_blocks %d, threads_per_block %d, cuda_unroll %d\n", nb_blocks, threads_per_block, cuda_unroll);
   local_buffer_size = nb_blocks * threads_per_block * sizeof(double);
-  for (int i = 0; i < nb_gpus; i++) {
-    gpuErrchk( cudaSetDevice(0) );
-    gpuErrchk( cudaMalloc((void**)&(local_buffer[i]), sizeof(double) * nb_blocks * threads_per_block * cuda_unroll) );
-    assert(local_buffer[i] != NULL);
-    gpuErrchk( cudaStreamCreate(&(cuda_stream_array[i])) );
-  }
+
+  // for (int i = 0; i < nb_gpus; i++) {
+    // gpuErrchk( cudaSetDevice(0) );
+  void* bufptr;
+  gpuErrchk( cudaMalloc(&bufptr, sizeof(double) * nb_blocks * threads_per_block * cuda_unroll) );
+  local_buffer[gpuid] = (char*)bufptr;
+  // assert(local_buffer[i] != NULL);
+    // gpuErrchk( cudaStreamCreate(&(cuda_stream_array[i])) );
+  // }
 }
 
 void fini_cuda_support()
 {
-  for (int i = 0; i < nb_local_buffer; i++) {
-    gpuErrchk( cudaSetDevice(0) );
-    gpuErrchk( cudaFree(local_buffer[i]) );
-    local_buffer[i] = NULL;
-    gpuErrchk( cudaStreamDestroy(cuda_stream_array[i]) );
-  }
+  // for (int i = 0; i < nb_local_buffer; i++) {
+  //   gpuErrchk( cudaSetDevice(0) );
+  //   gpuErrchk( cudaFree(local_buffer[i]) );
+  //   local_buffer[i] = NULL;
+  //   gpuErrchk( cudaStreamDestroy(cuda_stream_array[i]) );
+  // }
 }
 
 void execute_kernel_compute_cuda(const Kernel &kernel, char *scratch_ptr, size_t scratch_bytes)
@@ -61,6 +66,10 @@ void execute_kernel_compute_cuda(const Kernel &kernel, char *scratch_ptr, size_t
 //  printf("CUDA COMPUTE KERNEL buffer %p, size %lld, nb_blocks %d, threads_per_block %d\n", scratch_ptr, scratch_bytes, kernel.nb_blocks, kernel.threads_per_block);
   assert(scratch_bytes <= local_buffer_size);
   assert(kernel.gpu_id == 0);
+
+  CUstream_st* stream = (CUstream_st*)kernel.stream;
+  uint64_t gpuid = kernel.gpuid;
+  double* buffer = (double*)local_buffer[gpuid];
     
   if (kernel.memcpy_required == 1) {
  //   printf("enable memcpy in\n");
@@ -68,16 +77,16 @@ void execute_kernel_compute_cuda(const Kernel &kernel, char *scratch_ptr, size_t
     gpuErrchk( cudaStreamSynchronize(cuda_stream_array[kernel.gpu_id]) );
   }
   if (kernel.cuda_unroll == 4) {
-    execute_kernel_compute_cuda_kernel_unroll_4<<<kernel.nb_blocks, kernel.threads_per_block, 0, cuda_stream_array[kernel.gpu_id]>>>(kernel.iterations, (double *)local_buffer[kernel.gpu_id]);
+    execute_kernel_compute_cuda_kernel_unroll_4<<<kernel.nb_blocks, kernel.threads_per_block, 0, stream>>>(kernel.iterations, buffer);
   } else if (kernel.cuda_unroll == 8) {
-    execute_kernel_compute_cuda_kernel_unroll_8<<<kernel.nb_blocks, kernel.threads_per_block, 0, cuda_stream_array[kernel.gpu_id]>>>(kernel.iterations, (double *)local_buffer[kernel.gpu_id]);
+    execute_kernel_compute_cuda_kernel_unroll_8<<<kernel.nb_blocks, kernel.threads_per_block, 0, stream>>>(kernel.iterations, buffer);
   } else if (kernel.cuda_unroll == 16) {
-    execute_kernel_compute_cuda_kernel_unroll_16<<<kernel.nb_blocks, kernel.threads_per_block, 0, cuda_stream_array[kernel.gpu_id]>>>(kernel.iterations, (double *)local_buffer[kernel.gpu_id]);
+    execute_kernel_compute_cuda_kernel_unroll_16<<<kernel.nb_blocks, kernel.threads_per_block, 0, stream>>>(kernel.iterations, buffer);
   } else {
-    execute_kernel_compute_cuda_kernel_unroll_1<<<kernel.nb_blocks, kernel.threads_per_block, 0, cuda_stream_array[kernel.gpu_id]>>>(kernel.iterations, (double *)local_buffer[kernel.gpu_id]);
+    execute_kernel_compute_cuda_kernel_unroll_1<<<kernel.nb_blocks, kernel.threads_per_block, 0, stream>>>(kernel.iterations, buffer);
   }
-  gpuErrchk( cudaPeekAtLastError() );
-  gpuErrchk( cudaStreamSynchronize(cuda_stream_array[kernel.gpu_id]) );
+  // gpuErrchk( cudaPeekAtLastError() );
+  // gpuErrchk( cudaStreamSynchronize(stream) );
   if (kernel.memcpy_required == 1) {
  //   printf("enable memcpy out\n");
     gpuErrchk( cudaMemcpyAsync(scratch_ptr, local_buffer[kernel.gpu_id], scratch_bytes, cudaMemcpyDeviceToHost, cuda_stream_array[kernel.gpu_id]) );

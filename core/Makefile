@@ -10,17 +10,17 @@ SLIB_SYMLINK=libcore_s.a
 DEBUG ?= 0
 
 CFLAGS ?=
-CFLAGS += -std=c11 -fPIC
+CFLAGS += -std=c17 -fPIC
 
 CXXFLAGS ?=
-CXXFLAGS += -std=c++11 -fPIC
+CXXFLAGS += -std=c++17 -fPIC
 
 ifeq ($(strip $(DEBUG)),0)
 	CFLAGS += -O3
 	CXXFLAGS += -O3
 else
-	CFLAGS += -O0 -ggdb -DDEBUG_CORE
-	CXXFLAGS += -O0 -ggdb -DDEBUG_CORE
+	CFLAGS += -O0 -ggdb -DDEBUG_CORE # -fsanitize=address
+	CXXFLAGS += -O0 -ggdb -DDEBUG_CORE # -fsanitize=address
 endif
 
 #check AVX support
@@ -45,7 +45,7 @@ else ifeq ($(strip $(HAVE_AVX)),1)
 	CXXFLAGS += -mavx
 endif
 
-LDFLAGS ?=
+LDFLAGS ?= 
 
 ifeq ($(shell uname), Darwin)
 	LDFLAGS += -dynamiclib -single_module -undefined dynamic_lookup -fPIC
@@ -58,6 +58,10 @@ ifeq ($(shell uname), Darwin)
 else
 	LDFLAGS += -L. -Wl,--whole-archive -lcore -Wl,--no-whole-archive
 endif
+
+# ifneq ($(strip $(DEBUG)), 0)
+# 	LDFLAGS += # -static-libasan
+# endif
 
 include make_blas.mk
 include make_cuda.mk

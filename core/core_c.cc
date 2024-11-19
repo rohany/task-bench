@@ -107,7 +107,7 @@ void task_graph_execute_point_scratch(task_graph_t graph, long timestep, long po
   TaskGraph t(graph);
   t.execute_point(timestep, point, output_ptr, output_bytes,
                   input_ptr, input_bytes, n_inputs,
-                  scratch_ptr, scratch_bytes);
+                  scratch_ptr, scratch_bytes, nullptr, 0);
 }
 
 void task_graph_execute_point_scratch_auto(task_graph_t graph, long timestep, long point,
@@ -121,7 +121,7 @@ void task_graph_execute_point_scratch_auto(task_graph_t graph, long timestep, lo
   TaskGraph t(graph);
   t.execute_point(timestep, point, output_ptr, output_bytes,
                   input_ptr, input_bytes, n_inputs,
-                  const_cast<char *>(scratch.data()), scratch.size());
+                  const_cast<char *>(scratch.data()), scratch.size(), nullptr, 0);
 }
 
 void task_graph_execute_point_nonconst(task_graph_t graph, long timestep, long point,
@@ -133,7 +133,7 @@ void task_graph_execute_point_nonconst(task_graph_t graph, long timestep, long p
   t.execute_point(timestep, point, reinterpret_cast<char *>(output_ptr), output_bytes,
                   reinterpret_cast<const char **>(const_cast<const int64_t **>(input_ptr)),
                   input_bytes, n_inputs,
-                  NULL, 0);
+                  NULL, 0, nullptr, 0);
 }
 
 void task_graph_execute_point_scratch_nonconst(task_graph_t graph, long timestep, long point,
@@ -146,7 +146,7 @@ void task_graph_execute_point_scratch_nonconst(task_graph_t graph, long timestep
   t.execute_point(timestep, point, reinterpret_cast<char *>(output_ptr), output_bytes,
                   reinterpret_cast<const char **>(const_cast<const int64_t **>(input_ptr)),
                   input_bytes, n_inputs,
-                  scratch_ptr, scratch_bytes);
+                  scratch_ptr, scratch_bytes, nullptr, 0);
 }
 
 void task_graph_prepare_scratch(char *scratch_ptr, size_t scratch_bytes)
