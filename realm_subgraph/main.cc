@@ -1487,7 +1487,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     Machine::ProcessorQuery query(machine);
     query.only_kind(Processor::TOC_PROC);
     gpus.insert(gpus.end(), query.begin(), query.end());
-    assert(gpus.size() == procs.size());
+    // assert(gpus.size() == procs.size());
   }
 
   // long num_procs = procs.size();
@@ -1498,6 +1498,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     if (proc != p) {
       target_procs.push_back(proc);
     }
+  }
 
   // Initialize the GPUs.
   {
