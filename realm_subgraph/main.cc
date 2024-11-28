@@ -261,7 +261,7 @@ void leaf_task(const void *args, size_t arglen, const void *userdata,
 
 static Event define_subgraph(Subgraph &subgraph,
                              bool replayable,
-                             Processor p,
+                             const std::vector<Processor>& procs,
                              const TaskGraph &graph, size_t graph_index,
                              long start_timestep, long stop_timestep,
                              long first_point, long last_point,
@@ -305,8 +305,11 @@ static Event define_subgraph(Subgraph &subgraph,
   }
 
   std::vector<size_t> preconditions;
+  std::vector<unsigned> task_preconditions;
   std::vector<std::vector<size_t> > copy_postconditions(num_fields);
   size_t next_precondition = 0;
+
+  std::map<std::pair<long, long>, unsigned> task_points;
 
   for (long timestep = start_timestep; timestep < stop_timestep; ++timestep) {
     long dset = graph.dependence_set_at_timestep(timestep);
@@ -329,9 +332,15 @@ static Event define_subgraph(Subgraph &subgraph,
       // Gather inputs
       long n_inputs = 0, slot = 0;
       preconditions.clear();
+      task_preconditions.clear();
       for (auto interval : graph.dependencies(dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
-          preconditions.push_back(next_precondition++);
+          auto it = task_points.find({timestep - 1, dep});
+	  if (it != task_points.end()) {
+	    task_preconditions.push_back(it->second);
+	  } else {
+            preconditions.push_back(next_precondition++);
+	  }
 
           if (dep >= last_offset && dep < last_offset + last_width) {
             char *data = result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST);
@@ -357,27 +366,27 @@ static Event define_subgraph(Subgraph &subgraph,
       //     (In this case the dependency catches on the copy.)
 
       // WAR dependencies (part 1)
-      for (auto interval : graph.reverse_dependencies(last_field_dset, point)) {
-        for (long dep = interval.first; dep <= interval.second; ++dep) {
-          if (dep >= next_offset && dep < next_offset + next_width) {
-            // Only copy when the dependent task doesn't live in the same address space.
-            if (!force_copies && result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
-              preconditions.push_back(next_precondition++);
-            }
-          }
-        }
-      }
+      // for (auto interval : graph.reverse_dependencies(last_field_dset, point)) {
+      //   for (long dep = interval.first; dep <= interval.second; ++dep) {
+      //     if (dep >= next_offset && dep < next_offset + next_width) {
+      //       // Only copy when the dependent task doesn't live in the same address space.
+      //       if (!force_copies && result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
+      //         preconditions.push_back(next_precondition++);
+      //       }
+      //     }
+      //   }
+      // }
 
-      // WAR dependencies (part 2)
-      for (auto interval : graph.reverse_dependencies(next_dset, point)) {
-        for (long dep = interval.first; dep <= interval.second; ++dep) {
-          if (dep >= next_offset && dep < next_offset + next_width) {
-            if (force_copies || !result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
-              preconditions.push_back(next_precondition++);
-            }
-          }
-        }
-      }
+      // // WAR dependencies (part 2)
+      // for (auto interval : graph.reverse_dependencies(next_dset, point)) {
+      //   for (long dep = interval.first; dep <= interval.second; ++dep) {
+      //     if (dep >= next_offset && dep < next_offset + next_width) {
+      //       if (force_copies || !result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
+      //         preconditions.push_back(next_precondition++);
+      //       }
+      //     }
+      //   }
+      // }
 
       // Launch task
       size_t task_postcondition = SIZE_MAX;
@@ -400,13 +409,15 @@ static Event define_subgraph(Subgraph &subgraph,
         assert(ser.bytes_left() == 0);
 
         SubgraphDefinition::TaskDesc task;
-        task.proc = p;
+        task.proc = procs[point % procs.size()];
         task.task_id = Processor::TaskFuncID(LEAF_TASK);
         task.args = ByteArray(leaf_buffer, leaf_bufsize);
         task.prs = ProfilingRequestSet();
 
         task_postcondition = definition.tasks.size();
         definition.tasks.push_back(task);
+	task_points[{timestep, point}] = task_postcondition;
+
 
         SubgraphDefinition::Interpolation interp;
         interp.offset = global_timestep_offset.at(timestep - start_timestep);
@@ -430,6 +441,18 @@ static Event define_subgraph(Subgraph &subgraph,
           definition.dependencies.push_back(precondition_dep);
         }
 
+	for (auto precondition : task_preconditions) {
+          SubgraphDefinition::Dependency precondition_dep;
+          precondition_dep.src_op_kind = SubgraphDefinition::OpKind::OPKIND_TASK;
+          precondition_dep.src_op_index = precondition;
+          precondition_dep.src_op_port = 0;
+          precondition_dep.tgt_op_kind = SubgraphDefinition::OpKind::OPKIND_TASK;
+          precondition_dep.tgt_op_index = task_postcondition;
+          precondition_dep.tgt_op_port = 0;
+
+          definition.dependencies.push_back(precondition_dep);
+	}
+
         for (auto precondition : copy_postconditions.at(fid - FID_FIRST)) {
           SubgraphDefinition::Dependency precondition_dep;
           precondition_dep.src_op_kind = SubgraphDefinition::OpKind::OPKIND_COPY;
@@ -448,6 +471,12 @@ static Event define_subgraph(Subgraph &subgraph,
       // RAW dependencies
       for (auto interval : graph.reverse_dependencies(next_dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
+          // TODO (rohany): I don't understand how this works ... 
+          // We don't need arrivals for points inside this shard.
+	  // if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
+	  // if ((timestep + num_fields < stop_timestep))
+	  //   continue;
+
           global_ser << Barrier::NO_BARRIER;
           size_t complete_offset = global_ser.bytes_used() - sizeof(Barrier);
 
@@ -518,6 +547,7 @@ static Event define_subgraph(Subgraph &subgraph,
           }
         }
       }
+
       // Also need to arrive at any points not included in this
       // dset, otherwise we'll deadlock.
       for (long dep : war_points_not_in_dset.at(graph_index).at(point - first_point).at(next_dset)) {
@@ -548,42 +578,42 @@ static Event define_subgraph(Subgraph &subgraph,
       }
 
       // WAR dependencies
-      for (auto interval : graph.dependencies(dset, point)) {
-        for (long dep = interval.first; dep <= interval.second; ++dep) {
-          global_ser << Barrier::NO_BARRIER;
-          size_t complete_offset = global_ser.bytes_used() - sizeof(Barrier);
+      // for (auto interval : graph.dependencies(dset, point)) {
+      //   for (long dep = interval.first; dep <= interval.second; ++dep) {
+      //     global_ser << Barrier::NO_BARRIER;
+      //     size_t complete_offset = global_ser.bytes_used() - sizeof(Barrier);
 
-          SubgraphDefinition::ArrivalDesc arrival;
-          arrival.barrier = Barrier::NO_BARRIER, // to be interpolated
-          arrival.count = 1;
-          arrival.reduce_value = ByteArray();
+      //     SubgraphDefinition::ArrivalDesc arrival;
+      //     arrival.barrier = Barrier::NO_BARRIER, // to be interpolated
+      //     arrival.count = 1;
+      //     arrival.reduce_value = ByteArray();
 
-          size_t arrival_precondition = definition.arrivals.size();
-          definition.arrivals.push_back(arrival);
+      //     size_t arrival_precondition = definition.arrivals.size();
+      //     definition.arrivals.push_back(arrival);
 
-          SubgraphDefinition::Interpolation interp;
-          interp.offset = complete_offset;
-          interp.bytes = sizeof(Barrier);
-          interp.target_kind = SubgraphDefinition::Interpolation::TargetKind::TARGET_ARRIVAL_BARRIER;
-          interp.target_index = arrival_precondition;
-          interp.target_offset = 0;
-          interp.redop_id = 0;
+      //     SubgraphDefinition::Interpolation interp;
+      //     interp.offset = complete_offset;
+      //     interp.bytes = sizeof(Barrier);
+      //     interp.target_kind = SubgraphDefinition::Interpolation::TargetKind::TARGET_ARRIVAL_BARRIER;
+      //     interp.target_index = arrival_precondition;
+      //     interp.target_offset = 0;
+      //     interp.redop_id = 0;
 
-          definition.interpolations.push_back(interp);
+      //     definition.interpolations.push_back(interp);
 
-          if (task_postcondition != SIZE_MAX) {
-            SubgraphDefinition::Dependency arrival_dep;
-            arrival_dep.src_op_kind = SubgraphDefinition::OpKind::OPKIND_TASK;
-            arrival_dep.src_op_index = task_postcondition;
-            arrival_dep.src_op_port = 0;
-            arrival_dep.tgt_op_kind = SubgraphDefinition::OpKind::OPKIND_ARRIVAL;
-            arrival_dep.tgt_op_index = arrival_precondition;
-            arrival_dep.tgt_op_port = 0;
+      //     if (task_postcondition != SIZE_MAX) {
+      //       SubgraphDefinition::Dependency arrival_dep;
+      //       arrival_dep.src_op_kind = SubgraphDefinition::OpKind::OPKIND_TASK;
+      //       arrival_dep.src_op_index = task_postcondition;
+      //       arrival_dep.src_op_port = 0;
+      //       arrival_dep.tgt_op_kind = SubgraphDefinition::OpKind::OPKIND_ARRIVAL;
+      //       arrival_dep.tgt_op_index = arrival_precondition;
+      //       arrival_dep.tgt_op_port = 0;
 
-            definition.dependencies.push_back(arrival_dep);
-          }
-        }
-      }
+      //       definition.dependencies.push_back(arrival_dep);
+      //     }
+      //   }
+      // }
       // Also need to arrive at any points not included in this
       // dset, otherwise we'll deadlock.
       for (long dep : raw_points_not_in_dset.at(graph_index).at(point - first_point).at(dset)) {
@@ -634,6 +664,8 @@ static Event define_subgraph(Subgraph &subgraph,
 
   std::cout << "SUBGRAPH INFO: " << definition.tasks.size() << " " << definition.copies.size() << " " << definition.dependencies.size() << " " << definition.arrivals.size() << std::endl;
 
+  std::cout << "TASKS: " << definition.tasks.size() << " EDGES: " << definition.dependencies.size() << " ARRIVALS: " << definition.arrivals.size() << " COPIES: " << definition.copies.size() << std::endl;
+
   return Subgraph::create_subgraph(subgraph, definition, ProfilingRequestSet());
 }
 
@@ -660,6 +692,8 @@ static Event instantiate_subgraph(Subgraph &subgraph,
 
   std::vector<Event> preconditions;
 
+  std::set<std::pair<long, long>> tasks;
+
   for (long timestep = start_timestep; timestep < stop_timestep; ++timestep) {
     long dset = graph.dependence_set_at_timestep(timestep);
     long next_dset = graph.dependence_set_at_timestep(timestep + 1);
@@ -681,6 +715,8 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       // Gather inputs
       for (auto interval : graph.dependencies(dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
+	  if (tasks.find({timestep - 1, dep}) != tasks.end())
+	    continue;
           Barrier &ready = raw_in.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
           preconditions.push_back(ready.get_previous_phase());
         }
@@ -693,39 +729,45 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       //     (In this case the dependency catches on the copy.)
 
       // WAR dependencies (part 1)
-      for (auto interval : graph.reverse_dependencies(last_field_dset, point)) {
-        for (long dep = interval.first; dep <= interval.second; ++dep) {
-          if (dep >= next_offset && dep < next_offset + next_width) {
-            // Only copy when the dependent task doesn't live in the same address space.
-            if (!force_copies && result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
-              Barrier &ready = war_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
-              preconditions.push_back(ready.get_previous_phase());
-            }
-          }
-        }
-      }
+      // for (auto interval : graph.reverse_dependencies(last_field_dset, point)) {
+      //   for (long dep = interval.first; dep <= interval.second; ++dep) {
+      //     if (dep >= next_offset && dep < next_offset + next_width) {
+      //       // Only copy when the dependent task doesn't live in the same address space.
+      //       if (!force_copies && result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
+      //         Barrier &ready = war_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
+      //         preconditions.push_back(ready.get_previous_phase());
+      //       }
+      //     }
+      //   }
+      // }
 
-      // WAR dependencies (part 2)
-      for (auto interval : graph.reverse_dependencies(next_dset, point)) {
-        for (long dep = interval.first; dep <= interval.second; ++dep) {
-          if (dep >= next_offset && dep < next_offset + next_width) {
-            // Only copy when the dependent task doesn't live in the same address space.
-            if (force_copies || !result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
-              Barrier &ready = war_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
-              preconditions.push_back(ready.get_previous_phase());
-            }
-          }
-        }
-      }
+      // // WAR dependencies (part 2)
+      // for (auto interval : graph.reverse_dependencies(next_dset, point)) {
+      //   for (long dep = interval.first; dep <= interval.second; ++dep) {
+      //     if (dep >= next_offset && dep < next_offset + next_width) {
+      //       // Only copy when the dependent task doesn't live in the same address space.
+      //       if (force_copies || !result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
+      //         Barrier &ready = war_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
+      //         preconditions.push_back(ready.get_previous_phase());
+      //       }
+      //     }
+      //   }
+      // }
 
       // Launch task
+      tasks.insert({timestep, point});
 
       // Nothing to do, already completely described by subgraph and interpolations
 
-      // WAR dependencies (part 2)
       // RAW dependencies
       for (auto interval : graph.reverse_dependencies(next_dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
+
+	  // if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
+	  //   continue;
+	  // if ((timestep + num_fields < stop_timestep))
+	  //   continue;
+
           Barrier &complete = raw_out.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
           global_ser << complete;
 
@@ -740,12 +782,12 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       }
 
       // WAR dependencies
-      for (auto interval : graph.dependencies(dset, point)) {
-        for (long dep = interval.first; dep <= interval.second; ++dep) {
-          Barrier &complete = war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
-          global_ser << complete;
-        }
-      }
+      // for (auto interval : graph.dependencies(dset, point)) {
+      //   for (long dep = interval.first; dep <= interval.second; ++dep) {
+      //     Barrier &complete = war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
+      //     global_ser << complete;
+      //   }
+      // }
       // Also need to arrive at any points not included in this
       // dset, otherwise we'll deadlock.
       for (long dep : raw_points_not_in_dset.at(graph_index).at(point - first_point).at(dset)) {
@@ -761,13 +803,13 @@ static Event instantiate_subgraph(Subgraph &subgraph,
         bar.second = bar.second.advance_barrier();
       }
 
-      for (auto &bar : war_in.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST)) {
-        bar.second = bar.second.advance_barrier();
-      }
+      // for (auto &bar : war_in.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST)) {
+      //   bar.second = bar.second.advance_barrier();
+      // }
 
-      for (auto &bar : war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST)) {
-        bar.second = bar.second.advance_barrier();
-      }
+      // for (auto &bar : war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST)) {
+      //   bar.second = bar.second.advance_barrier();
+      // }
     }
   }
 
@@ -788,6 +830,7 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
   std::vector<std::vector<RegionInstance> > task_inputs;
   std::vector<std::vector<RegionInstance> > raw_exchange;
   std::vector<std::vector<RegionInstance> > war_exchange;
+  std::vector<Processor> target_procs;
   {
     FixedBufferDeserializer ser(args, arglen);
     ser >> a;
@@ -796,6 +839,7 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
     ser >> task_inputs;
     ser >> raw_exchange;
     ser >> war_exchange;
+    ser >> target_procs;
 
     assert(ser.bytes_left() == 0);
   }
@@ -803,6 +847,7 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
   long proc_index = a.proc_index;
   long num_procs = a.num_procs;
   long num_fields = a.num_fields;
+  long subgraph_iters = a.subgraph_iters;
   long force_copies = a.force_copies;
   Memory sysmem = a.sysmem;
   Memory regmem = a.regmem;
@@ -1288,6 +1333,8 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
       Event postcondition = Event::NO_EVENT;
 
       long period = lcm(num_fields, graph.timestep_period());
+      period *= subgraph_iters;
+      assert(graph.timesteps % period == 0);
 
       for (long start_timestep = 0; start_timestep < graph.timesteps; start_timestep += period) {
         long stop_timestep = start_timestep + period;
@@ -1295,6 +1342,8 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
         bool replay = stop_timestep <= graph.timesteps;
 
         // Currently we only generate subgraphs for full-width task graphs.
+	// NOTE (rohany): This means that timestep 0 (without dependencies on
+	//  the previous timestep) does not get replayed.
         if (replay) {
 	  // TODO (rohany): Why was this -1?
           // for (long timestep = start_timestep - 1; timestep < stop_timestep + 1; ++timestep) {
@@ -1321,7 +1370,7 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
           // FIXME: Am I actually required to track the ready event of this subgraph??
           current_ready = define_subgraph(current_subgraph,
                                           replay,
-                                          gpu,
+                                          target_procs,
                                           graph, graph_index,
                                           start_timestep, stop_timestep,
                                           first_point, last_point,
@@ -1398,6 +1447,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
 
   long num_fields = 5;
   bool force_copies = false;
+  long subgraph_iters = 1;
   for (int i = 1; i < global_argc; i++) {
     if (!strcmp(global_argv[i], "-field")) {
       long value  = atol(global_argv[++i]);
@@ -1406,6 +1456,14 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
         abort();
       }
       num_fields = value;
+    }
+    if (!strcmp(global_argv[i], "-subgraph_iters")) {
+      long value  = atol(global_argv[++i]);
+      if (value <= 0) {
+        fprintf(stderr, "error: Invalid flag \"-subgraph_iters %ld\" must be > 1\n", value);
+        abort();
+      }
+      subgraph_iters = value;
     }
 
     if (!strcmp(global_argv[i], "-force-copies")) {
@@ -1423,7 +1481,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     query.only_kind(Processor::LOC_PROC);
     procs.insert(procs.end(), query.begin(), query.end());
   }
-  long num_procs = procs.size();
+  // long num_procs = procs.size();
   std::vector<Processor> gpus;
   {
     Machine::ProcessorQuery query(machine);
@@ -1431,6 +1489,15 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     gpus.insert(gpus.end(), query.begin(), query.end());
     assert(gpus.size() == procs.size());
   }
+
+  // long num_procs = procs.size();
+  long num_procs = 1;
+  std::vector<Processor> target_procs;
+  // TODO (rohany): Smarter way to do this ... 
+  for (auto proc : gpus) {
+    if (proc != p) {
+      target_procs.push_back(proc);
+    }
 
   // Initialize the GPUs.
   {
@@ -1589,13 +1656,17 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
       Barrier::create_barrier(num_procs, REDOP_MAX, &RedopMax::identity,
                               sizeof(RedopMax::identity));
 
+  // target_procs.resize(1);
+
   for (long proc_index = 0; proc_index < num_procs; ++proc_index) {
     auto proc = procs.at(proc_index);
+    // target_procs[0] = proc;
 
     ShardArgs args;
     args.proc_index = proc_index;
     args.num_procs = num_procs;
     args.num_fields = num_fields;
+    args.subgraph_iters = subgraph_iters;
     args.force_copies = force_copies;
     args.sysmem = proc_sysmems[proc];
     args.regmem = proc_regmems[proc];
@@ -1613,6 +1684,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     ser << task_inputs;
     ser << raw_exchange;
     ser << war_exchange;
+    ser << target_procs;
     events.push_back(
       proc.spawn(SHARD_TASK, ser.get_buffer(), ser.bytes_used()));
   }

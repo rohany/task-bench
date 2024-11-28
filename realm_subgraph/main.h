@@ -33,6 +33,7 @@ public:
   long proc_index;
   long num_procs;
   long num_fields;
+  long subgraph_iters;
   bool force_copies;
   Realm::Memory sysmem;
   Realm::Memory regmem;
@@ -46,6 +47,7 @@ public:
   // std::vector<std::vector<RegionInstance> > task_results;
   // std::vector<std::vector<RegionInstance> > raw_exchange;
   // std::vector<std::vector<RegionInstance> > war_exchange;
+  // std::vector<Realm::Processor> procs;
 };
 
 TYPE_IS_SERIALIZABLE(ShardArgs);
