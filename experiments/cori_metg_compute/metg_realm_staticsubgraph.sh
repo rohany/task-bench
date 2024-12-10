@@ -3,15 +3,18 @@
 #SBATCH --qos=regular
 #SBATCH --constraint=haswell
 #SBATCH --exclusive
-#SBATCH --time=02:00:00
+#SBATCH --time=01:00:00
 #SBATCH --mail-type=ALL
 
-# cores=$(( $(echo $SLURM_JOB_CPUS_PER_NODE | cut -d'(' -f 1) / 2 ))
+# total_cores=$(( $(echo $SLURM_JOB_CPUS_PER_NODE | cut -d'(' -f 1) / 2 ))
+# cores=$(( $total_cores - 2 ))
 cores=10
 
+export STATIC_SUBGRAPH_OPT=1
+
 function launch {
-    # srun -n $(( $1 * cores )) -N $1 --ntasks-per-node=$cores --cpus-per-task=2 --cpu_bind cores ../../mpi/$VARIANT "${@:2}"
-    mpirun -n $(( $1 * cores )) --bind-to core ../../mpi/$VARIANT "${@:2}"
+    # srun -n $1 -N $1 --cpus-per-task=$(( total_cores * 2 )) --cpu_bind none ../../realm${VARIANT+_}$VARIANT/task_bench "${@:2}" -ll:cpu $cores -field 6 -ll:util 0 -ll:rsize 512
+    ../../realm_subgraph/task_bench "${@:2}" -ll:cpu $(( cores + 1)) -field 5 -subgraph_iters 5 -ll:util 0 -ll:rsize 512
 }
 
 function repeat {
@@ -27,7 +30,7 @@ function repeat {
 }
 
 function sweep {
-    for s in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21; do
+    for s in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
         for rep in 0 1 2 3 4; do
             if [[ $rep -le $s ]]; then
                 local args
@@ -39,10 +42,10 @@ function sweep {
 }
 
 # for n in $SLURM_JOB_NUM_NODES; do
-for n in 1 ; do
+for n in 1; do
     for g in ${NGRAPHS:-1}; do
         for t in ${PATTERN:-stencil_1d}; do
-            sweep launch $n $g $t > mpi_${VARIANT}_ngraphs_${g}_type_${t}_nodes_${n}.log
+            sweep launch $n $g $t > realm${VARIANT+_}${VARIANT}_static_subgraph_ngraphs_${g}_type_${t}_nodes_${n}.log
         done
     done
 done

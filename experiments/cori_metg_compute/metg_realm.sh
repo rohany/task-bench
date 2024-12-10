@@ -6,11 +6,13 @@
 #SBATCH --time=01:00:00
 #SBATCH --mail-type=ALL
 
-total_cores=$(( $(echo $SLURM_JOB_CPUS_PER_NODE | cut -d'(' -f 1) / 2 ))
-cores=$(( $total_cores - 2 ))
+# total_cores=$(( $(echo $SLURM_JOB_CPUS_PER_NODE | cut -d'(' -f 1) / 2 ))
+# cores=$(( $total_cores - 2 ))
+cores=10
 
 function launch {
-    srun -n $1 -N $1 --cpus-per-task=$(( total_cores * 2 )) --cpu_bind none ../../realm${VARIANT+_}$VARIANT/task_bench "${@:2}" -ll:cpu $cores -field 6 -ll:util 0 -ll:rsize 512
+    # srun -n $1 -N $1 --cpus-per-task=$(( total_cores * 2 )) --cpu_bind none ../../realm${VARIANT+_}$VARIANT/task_bench "${@:2}" -ll:cpu $cores -field 6 -ll:util 0 -ll:rsize 512
+    ../../realm_subgraph/task_bench "${@:2}" -ll:cpu $(( cores + 1)) -field 5 -subgraph_iters 5 -ll:util 0 -ll:rsize 512
 }
 
 function repeat {
@@ -37,7 +39,8 @@ function sweep {
     done
 }
 
-for n in $SLURM_JOB_NUM_NODES; do
+# for n in $SLURM_JOB_NUM_NODES; do
+for n in 1; do
     for g in ${NGRAPHS:-1}; do
         for t in ${PATTERN:-stencil_1d}; do
             sweep launch $n $g $t > realm${VARIANT+_}${VARIANT}_ngraphs_${g}_type_${t}_nodes_${n}.log

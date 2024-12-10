@@ -39,7 +39,7 @@ NVCC_FLAGS	?= -std=c++17
 GASNET_FLAGS	?=
 LD_FLAGS	?=
 
-CC_FLAGS += -std=c++17 -I../core
+CC_FLAGS += -std=c++17 -I../core -g
 LD_FLAGS += -L../core -lcore_s
 
 include ../core/make_blas.mk

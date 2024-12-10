@@ -164,6 +164,7 @@ if args.ylog:
     ax.set_yscale("log", base=10)
 
 data = csv2rec(args.filename)
+print(data)
 nodes = getattr(data, args.xdata)
 if args.xscale:
     nodes = nodes * args.xscale

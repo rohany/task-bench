@@ -450,8 +450,8 @@ static Event define_subgraph(Subgraph &subgraph,
           // TODO (rohany): I don't understand how this works ... 
           // We don't need arrivals for points inside this shard.
 	  // if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
-	  // if ((timestep + num_fields < stop_timestep))
-	  //   continue;
+	  if ((timestep + num_fields < stop_timestep))
+	    continue;
 
           global_ser << Barrier::NO_BARRIER;
           size_t complete_offset = global_ser.bytes_used() - sizeof(Barrier);
@@ -738,11 +738,13 @@ static Event instantiate_subgraph(Subgraph &subgraph,
 
 	  // if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
 	  //   continue;
-	  // if ((timestep + num_fields < stop_timestep))
-	  //   continue;
+	  if ((timestep + num_fields < stop_timestep))
+	    continue;
 
           Barrier &complete = raw_out.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
           global_ser << complete;
+
+	  complete = complete.advance_barrier();
 
           // Nothing to do, already completely described by subgraph and interpolations
         }
@@ -764,15 +766,18 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       // Also need to arrive at any points not included in this
       // dset, otherwise we'll deadlock.
       for (long dep : raw_points_not_in_dset.at(graph_index).at(point - first_point).at(dset)) {
+	      continue;
         Barrier &barrier = war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
         global_ser << barrier;
       }
 
       for (auto &bar : raw_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST)) {
+	      continue;
         bar.second = bar.second.advance_barrier();
       }
 
       for (auto &bar : raw_out.at(graph_index).at(point - first_point).at(fid - FID_FIRST)) {
+	      continue;
         bar.second = bar.second.advance_barrier();
       }
 
@@ -1265,6 +1270,8 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
   assert(scratch_ptr);
   TaskGraph::prepare_scratch(scratch_ptr, max_scratch_bytes);
 
+  // std::cout << "AAAA " << input_ptr.size() << " " << input_bytes.size() << std::endl;
+
   // Statically allocate buffer to use for task input
   size_t leaf_bufsize = 0;
   {
@@ -1282,6 +1289,8 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
   sync.arrive(1);
   sync.wait();
   sync = sync.advance_barrier();
+
+  std::vector<Subgraph> to_delete;
 
   // Main loop
   unsigned long long start_time = 0, stop_time = 0;
@@ -1356,8 +1365,10 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
                                           scratch_ptr,
                                           leaf_buffer,
                                           leaf_bufsize);
+          start_time = Clock::current_time_in_nanoseconds();
         }
 
+	// std::cout << "Issuing subgraph" << std::endl;
         // Replay the subgraph.
         postcondition = instantiate_subgraph(current_subgraph,
                                              Event::merge_events(current_ready, postcondition),
@@ -1373,15 +1384,19 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
                                              raw_points_not_in_dset,
                                              war_points_not_in_dset,
                                              result_base);
+	postcondition.wait();
+	// std::cout << "Subgraph execution is done" << std::endl;
         events.push_back(postcondition);
 
         if (!replay) {
-          current_subgraph.destroy(postcondition);
+	  to_delete.push_back(current_subgraph);
+          // current_subgraph.destroy(postcondition);
         }
       }
 
       if (subgraph.exists()) {
-        subgraph.destroy(postcondition);
+	to_delete.push_back(subgraph);
+        // subgraph.destroy(postcondition);
       }
     }
 
@@ -1389,6 +1404,11 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
     events.clear();
 
     stop_time = Clock::current_time_in_nanoseconds();
+
+    for (auto& sg : to_delete) {
+      if (sg.exists())
+	sg.destroy();
+    }
   }
 
   first_start.arrive(1, Event::NO_EVENT, &start_time, sizeof(start_time));
