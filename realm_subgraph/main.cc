@@ -691,8 +691,20 @@ static Event instantiate_subgraph(Subgraph &subgraph,
         for (long dep = interval.first; dep <= interval.second; ++dep) {
 	  // if (tasks.find({timestep - 1, dep}) != tasks.end())
 	  //   continue;
-	  if ((dep >= first_point && dep <= last_point) && (timestep >= (start_timestep + num_fields)))
-	    continue;
+	  // if ((dep >= first_point && dep <= last_point) && (timestep >= (start_timestep + num_fields)))
+	  //   continue;
+
+	  // TODO (rohany): This convinces me that the logic being computed is correct,
+	  //  but the actual cross subgraph dependencies are not being computed correctly.
+	  // bool in_map = tasks.find({timestep - 1, dep}) != tasks.end();
+	  // If the dependence is out of set of points, we need it.
+	  // If the dependence is within our set of points, we only need it if the timestep
+	  // is not in the current subgraph.
+	  bool add = (dep < first_point || dep > last_point) || ((first_point <= dep && dep <= last_point) && (timestep == start_timestep));
+	  // assert((!in_map) == add);
+	  if (!add)
+            continue;
+
           Barrier &ready = raw_in.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
           preconditions.push_back(ready.get_previous_phase());
         }
@@ -1374,6 +1386,10 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
 	// std::cout << "Issuing subgraph" << std::endl;
         // Replay the subgraph.
         postcondition = instantiate_subgraph(current_subgraph,
+			                     // By depending on postcondition, it induces
+					     // a barrier between subgraph executions (that I
+					     // don't think was intended, but is causing other
+					     // issues in dependencies across subgraph replays to be hidden).
                                              Event::merge_events(current_ready, postcondition),
                                              graph, graph_index,
                                              start_timestep, stop_timestep,
