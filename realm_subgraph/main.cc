@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <limits>
 #include <vector>
 
 #include <float.h>
@@ -688,7 +689,9 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       // Gather inputs
       for (auto interval : graph.dependencies(dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
-	  if (tasks.find({timestep - 1, dep}) != tasks.end())
+	  // if (tasks.find({timestep - 1, dep}) != tasks.end())
+	  //   continue;
+	  if ((dep >= first_point && dep <= last_point) && (timestep >= (start_timestep + num_fields)))
 	    continue;
           Barrier &ready = raw_in.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
           preconditions.push_back(ready.get_previous_phase());
@@ -728,7 +731,7 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       // }
 
       // Launch task
-      tasks.insert({timestep, point});
+      // tasks.insert({timestep, point});
 
       // Nothing to do, already completely described by subgraph and interpolations
 
@@ -1384,7 +1387,7 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
                                              raw_points_not_in_dset,
                                              war_points_not_in_dset,
                                              result_base);
-	postcondition.wait();
+	// postcondition.wait();
 	// std::cout << "Subgraph execution is done" << std::endl;
         events.push_back(postcondition);
 

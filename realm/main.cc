@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <limits>
 #include <vector>
 
 #include <float.h>
