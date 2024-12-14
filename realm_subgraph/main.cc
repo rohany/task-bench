@@ -689,14 +689,6 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       // Gather inputs
       for (auto interval : graph.dependencies(dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
-	  // if (tasks.find({timestep - 1, dep}) != tasks.end())
-	  //   continue;
-	  // if ((dep >= first_point && dep <= last_point) && (timestep >= (start_timestep + num_fields)))
-	  //   continue;
-
-	  // TODO (rohany): This convinces me that the logic being computed is correct,
-	  //  but the actual cross subgraph dependencies are not being computed correctly.
-	  // bool in_map = tasks.find({timestep - 1, dep}) != tasks.end();
 	  // If the dependence is out of set of points, we need it.
 	  // If the dependence is within our set of points, we only need it if the timestep
 	  // is not in the current subgraph.
@@ -751,15 +743,11 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       for (auto interval : graph.reverse_dependencies(next_dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
 
-	  // if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
-	  //   continue;
-	  if ((timestep + num_fields < stop_timestep))
+	  if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
 	    continue;
 
           Barrier &complete = raw_out.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
           global_ser << complete;
-
-	  complete = complete.advance_barrier();
 
           // Nothing to do, already completely described by subgraph and interpolations
         }
@@ -786,13 +774,23 @@ static Event instantiate_subgraph(Subgraph &subgraph,
         global_ser << barrier;
       }
 
+      // This is tricky here, but we need to make sure that barriers only get tripped
+      // once per 'subgraph group'. So we make sure the raw_in barriers are advanced
+      // after they are used (the first num_fields steps), and then the out barriers
+      // are advanced only when they are used (the last num_fields steps). Barriers
+      // coming from outside the partition are always advanced.
       for (auto &bar : raw_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST)) {
-	      continue;
+        auto dep = bar.first;
+        bool add = (dep < first_point || dep > last_point) || ((first_point <= dep && dep <= last_point) && (timestep - start_timestep < num_fields));
+        if (!add)
+          continue;
         bar.second = bar.second.advance_barrier();
       }
 
       for (auto &bar : raw_out.at(graph_index).at(point - first_point).at(fid - FID_FIRST)) {
-	      continue;
+	auto dep = bar.first;
+	if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
+	  continue;
         bar.second = bar.second.advance_barrier();
       }
 
@@ -1386,11 +1384,14 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
 	// std::cout << "Issuing subgraph" << std::endl;
         // Replay the subgraph.
         postcondition = instantiate_subgraph(current_subgraph,
-			                     // By depending on postcondition, it induces
-					     // a barrier between subgraph executions (that I
-					     // don't think was intended, but is causing other
-					     // issues in dependencies across subgraph replays to be hidden).
-                                             Event::merge_events(current_ready, postcondition),
+			                     // We don't need to wait on the previous
+					     // instantiation to complete, as the barriers
+					     // are hooked up in the right way to provide
+					     // cross-subgraph dependencies. Note that
+					     // with INSTANTIATION_ORDER subgraph replays
+					     // it shouldn't matter if cross-subgraph dependencies
+					     // are set up correctly anyway.
+                                             current_ready,
                                              graph, graph_index,
                                              start_timestep, stop_timestep,
                                              first_point, last_point,
