@@ -12,7 +12,7 @@ CUDA_SLIB_SYMLINK=libcore_cuda_s.a
 
 NVCC			?= $(CUDA_ROOT)/bin/nvcc
 NVCCFLAGS ?=
-NVCCFLAGS += -std=c++11  --compiler-options '-fPIC' -DENABLE_CUDA
+NVCCFLAGS += -std=c++17  --compiler-options '-fPIC' -DENABLE_CUDA -I$(CUDA_ROOT)/include/
 CFLAGS    += -DENABLE_CUDA
 CXXFLAGS  += -DENABLE_CUDA
 NVCCLDFLAGS ?=

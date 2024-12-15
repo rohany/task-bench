@@ -66,4 +66,10 @@ public:
 
 TYPE_IS_SERIALIZABLE(LeafArgs);
 
+struct InitArgs {
+public:
+  TaskGraph graph;
+};
+TYPE_IS_SERIALIZABLE(InitArgs);
+
 #endif

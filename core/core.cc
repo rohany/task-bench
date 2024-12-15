@@ -561,7 +561,8 @@ void TaskGraph::execute_point(long timestep, long point,
                               char *output_ptr, size_t output_bytes,
                               const char **input_ptr, const size_t *input_bytes,
                               size_t n_inputs,
-                              char *scratch_ptr, size_t scratch_bytes) const
+                              char *scratch_ptr, size_t scratch_bytes,
+			      void* stream, uint64_t gpuid) const
 {
 #ifdef DEBUG_CORE
   // Validate graph_index
@@ -635,7 +636,10 @@ void TaskGraph::execute_point(long timestep, long point,
   }
 
   // Execute kernel
-  Kernel k(kernel);
+  auto kernelm = kernel;
+  kernelm.stream = stream;
+  kernelm.gpuid = gpuid;
+  Kernel k(kernelm);
   k.execute(graph_index, timestep, point, scratch_ptr, scratch_bytes);
 }
 
@@ -982,7 +986,7 @@ App::App(int argc, char **argv)
   check();
   
 #ifdef ENABLE_CUDA
-  init_cuda_support(graphs);
+  // init_cuda_support(graphs);
 #endif
 }
 

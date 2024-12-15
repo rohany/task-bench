@@ -23,8 +23,11 @@
 #include <float.h>
 
 #include "realm.h"
+#include "realm/cuda/cuda_module.h"
 
 #include "core.h"
+#include "cuda_kernel.h"
+
 
 using namespace Realm;
 using namespace Realm::Serialization;
@@ -39,6 +42,7 @@ enum {
   TOP_LEVEL_TASK = Processor::TASK_ID_FIRST_AVAILABLE,
   SHARD_TASK,
   LEAF_TASK,
+  INIT_TASK,
 };
 
 enum {
@@ -216,8 +220,21 @@ static long lcm(long a, long b) {
   return a * b / ::gcd(a, b);
 }
 
+void init_gpu_task(const void *args, size_t arglen, const void *userdata,
+               size_t userlen, Processor p, CUstream_st* stream) {
+  InitArgs a;
+  {
+    FixedBufferDeserializer ser(args, arglen);
+    ser >> a;
+    assert(ser.bytes_left() == 0);
+  }
+  std::vector<TaskGraph> graphs(1, a.graph);
+  init_cuda_support(graphs, p.id);
+  std::cout << "Finished GPU initialization on processor: " << p << std::endl;
+}
+
 void leaf_task(const void *args, size_t arglen, const void *userdata,
-               size_t userlen, Processor p)
+               size_t userlen, Processor p, CUstream_st* stream)
 {
   LeafArgs a;
   std::vector<uintptr_t> input_ptr;
@@ -230,10 +247,14 @@ void leaf_task(const void *args, size_t arglen, const void *userdata,
     assert(ser.bytes_left() == 0);
   }
 
+  Cuda::set_task_ctxsync_required(false);
+
+
+  // std::cout << "STREAM: " << stream << std::endl;
   a.graph.execute_point(a.timestep, a.point,
                         a.output_ptr, a.output_bytes,
                         (const char **)input_ptr.data(), (size_t *)input_bytes.data(), a.n_inputs,
-                        a.scratch_ptr, a.scratch_bytes);
+                        a.scratch_ptr, a.scratch_bytes, stream, p.id);
 }
 
 static Event define_subgraph(Subgraph &subgraph,
@@ -1487,10 +1508,31 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
   long num_procs = 1;
   std::vector<Processor> target_procs;
   // TODO (rohany): Smarter way to do this ... 
-  for (auto proc : procs) {
-    if (proc != p) {
-      target_procs.push_back(proc);
+  // for (auto proc : procs) {
+  //   if (proc != p) {
+  //     target_procs.push_back(proc);
+  //   }
+  // }
+
+  std::vector<Processor> gpus;
+  {
+    Machine::ProcessorQuery query(machine);
+    query.only_kind(Processor::TOC_PROC);
+    gpus.insert(gpus.end(), query.begin(), query.end());
+    // assert(gpus.size() == procs.size());
+    target_procs.insert(target_procs.end(), gpus.begin(), gpus.end());
+  }
+  // Initialize the GPUs.
+  {
+    Event e = Event::NO_EVENT;
+    for (auto gpu : gpus) {
+      InitArgs a;
+      a.graph = graphs[0];
+      DynamicBufferSerializer ser(4096);
+      ser << a;
+      e = gpu.spawn(INIT_TASK, ser.get_buffer(), ser.bytes_used(), e);
     }
+    e.wait();
   }
 
   std::map<Processor, Memory> proc_sysmems;
@@ -1723,9 +1765,12 @@ int main(int argc, char **argv)
 
   rt.register_task(TOP_LEVEL_TASK, top_level_task);
   rt.register_task(SHARD_TASK, shard_task);
-  rt.register_task(LEAF_TASK, leaf_task);
+  // rt.register_task(LEAF_TASK, leaf_task);
   rt.register_reduction<RedopMin>(REDOP_MIN);
   rt.register_reduction<RedopMax>(REDOP_MAX);
+
+  Processor::register_task_by_kind(Processor::TOC_PROC, false, INIT_TASK, CodeDescriptor(init_gpu_task), ProfilingRequestSet());
+  Processor::register_task_by_kind(Processor::TOC_PROC, false, LEAF_TASK, CodeDescriptor(leaf_task), ProfilingRequestSet());
 
   // select a processor to run the top level task on
   Processor p = Processor::NO_PROC;
