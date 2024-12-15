@@ -27,8 +27,14 @@ LIB := $(LIB) $(LIB_EXT)
 CXXFLAGS += $(INC)
 
 include ../core/make_blas.mk
+include ../core/make_cuda_app.mk
 
+ifeq ($(strip $(HAVE_CUDA)),1)
+TARGET = main main_cuda
+else
 TARGET = main
+endif
+
 all: $(TARGET)
 
 .PRECIOUS: %.cc %.o
@@ -38,7 +44,14 @@ main.o: main.cc ../core/timer.h
 
 main: main.o
 	$(CXX) $^ $(LIB) $(LDFLAGS) -o $@ 
+	
+ifeq ($(strip $(HAVE_CUDA)),1)	
+main_cuda.o: main_cuda.cc ../core/timer.h
+	$(CXX) -c $(CXXFLAGS) $<
 
+main_cuda: main_cuda.o
+	$(CXX) $^ $(LIB) $(LDFLAGS) -o $@ 
+endif
 
 clean:
 	rm -f *.o

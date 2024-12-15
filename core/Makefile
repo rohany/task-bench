@@ -60,9 +60,14 @@ else
 endif
 
 include make_blas.mk
+include make_cuda.mk
 
 .PHONY: all
+ifeq ($(strip $(HAVE_CUDA)),1)
+all: $(SLIB) $(DLIB) $(SLIB_SYMLINK) $(CUDA_SLIB) $(CUDA_DLIB) $(CUDA_SLIB_SYMLINK)
+else
 all: $(SLIB) $(DLIB) $(SLIB_SYMLINK)
+endif
 
 $(SLIB): $(OBJS) $(COBJS)
 	rm -f $@
@@ -82,6 +87,28 @@ $(OBJS) : %.o : %.cc $(HEADERS)
 $(COBJS) : %.o : %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+ifeq ($(strip $(HAVE_CUDA)),1)	
+$(CUDA_SLIB): $(CUDA_OBJS)
+	rm -f $@
+	$(AR) rc $@ $^
+
+$(CUDA_DLIB): $(CUDA_SLIB)
+	rm -f $@
+	$(CXX) $(NVCCLDFLAGS) -o $@.0
+	mv $@.0 $@
+
+$(CUDA_SLIB_SYMLINK):
+	ln -sf $(CUDA_SLIB) $@
+
+$(CUDA_OBJS) : %.o : %.cu $(CUDA_HEADERS)
+	$(NVCC) $(NVCCFLAGS) -c -o $@ $<
+endif
+
 .PHONY: clean
+ifeq ($(strip $(HAVE_CUDA)),1)
+clean:
+	rm -f $(OBJS) $(COBJS) $(SLIB) $(DLIB) $(CUDA_OBJS) $(CUDA_SLIB) $(CUDA_DLIB)
+else
 clean:
 	rm -f $(OBJS) $(COBJS) $(SLIB) $(DLIB)
+endif

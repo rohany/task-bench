@@ -29,6 +29,10 @@
 #include "core_kernel.h"
 #include "core_random.h"
 
+#ifdef ENABLE_CUDA
+#include "cuda_kernel.h"
+#endif
+
 #ifdef DEBUG_CORE
 typedef unsigned long long TaskGraphMask;
 static std::atomic<TaskGraphMask> has_executed_graph;
@@ -76,6 +80,13 @@ void Kernel::execute(long graph_index, long timestep, long point,
     assert(timestep >= 0 && point >= 0);
     execute_kernel_imbalance(*this, graph_index, timestep, point);
     break;
+#ifdef ENABLE_CUDA
+  case KernelType::CUDA_COMPUTE_BOUND:
+    assert(scratch_ptr != NULL);
+    assert(scratch_bytes > 0);
+    execute_kernel_compute_cuda(*this, scratch_ptr, scratch_bytes);
+    break; 
+#endif
   default:
     assert(false && "unimplemented kernel type");
   };
@@ -91,6 +102,9 @@ static const std::map<std::string, KernelType> ktype_by_name = {
   {"compute_bound2", KernelType::COMPUTE_BOUND2},
   {"io_bound", KernelType::IO_BOUND},
   {"load_imbalance", KernelType::LOAD_IMBALANCE},
+#ifdef ENABLE_CUDA
+  {"cuda_compute_bound", KernelType::CUDA_COMPUTE_BOUND},
+#endif
 };
 
 static std::map<KernelType, std::string> make_name_by_ktype()
@@ -645,7 +659,11 @@ static TaskGraph default_graph(long graph_index)
   graph.radix = 3;
   graph.period = -1;
   graph.fraction_connected = 0.25;
+#ifdef ENABLE_CUDA
+  graph.kernel = {KernelType::EMPTY, 0, 16, 0.0, 1, 32, 0, 0, 1};
+#else
   graph.kernel = {KernelType::EMPTY, 0, 16, 0.0};
+#endif
   graph.output_bytes_per_task = sizeof(std::pair<long, long>);
   graph.scratch_bytes_per_task = 0;
   graph.nb_fields = 0;
@@ -674,10 +692,17 @@ static void needs_argument(int i, int argc, const char *flag) {
 #define SCRATCH_FLAG "-scratch"
 #define SAMPLE_FLAG "-sample"
 #define IMBALANCE_FLAG "-imbalance"
-
 #define NODES_FLAG "-nodes"
 #define SKIP_GRAPH_VALIDATION_FLAG "-skip-graph-validation"
 #define FIELD_FLAG "-field"
+
+#ifdef ENABLE_CUDA
+#define CUDA_NB_BLOCKS_FLAG "-nb_blocks"
+#define CUDA_THREADS_PER_BLOCK_FLAG "-threads_per_block"
+#define CUDA_MEMCPY_FLAG "-memcpy"
+#define CUDA_UNROLL_FLAG "-cuda_unroll"
+#endif
+
 
 static void show_help_message(int argc, char **argv) {
   printf("%s: A Task Benchmark\n", argc > 0 ? argv[0] : "task_bench");
@@ -888,6 +913,47 @@ App::App(int argc, char **argv)
       }
       graph.nb_fields = value;
     }
+#ifdef ENABLE_CUDA    
+    if (!strcmp(argv[i], CUDA_NB_BLOCKS_FLAG)) {
+      needs_argument(i, argc, CUDA_NB_BLOCKS_FLAG);
+      int value  = atoi(argv[++i]);
+      if (value <= 0) {
+        fprintf(stderr, "error: Invalid flag \"" CUDA_NB_BLOCKS_FLAG " %d\" must be > 1\n", value);
+        abort();
+      }
+      graph.kernel.nb_blocks = value;
+    }
+    
+    if (!strcmp(argv[i], CUDA_THREADS_PER_BLOCK_FLAG)) {
+      needs_argument(i, argc, CUDA_THREADS_PER_BLOCK_FLAG);
+      int value  = atoi(argv[++i]);
+      if (value <= 0) {
+        fprintf(stderr, "error: Invalid flag \"" CUDA_THREADS_PER_BLOCK_FLAG " %d\" must be > 1\n", value);
+        abort();
+      }
+      graph.kernel.threads_per_block = value;
+    }
+    
+    if (!strcmp(argv[i], CUDA_MEMCPY_FLAG)) {
+      needs_argument(i, argc, CUDA_MEMCPY_FLAG);
+      int value  = atoi(argv[++i]);
+      if (value != 0 && value != 1) {
+        fprintf(stderr, "error: Invalid flag \"" CUDA_MEMCPY_FLAG " %d\" must be 0 or 1\n", value);
+        abort();
+      }
+      graph.kernel.memcpy_required = value;
+    }
+    
+    if (!strcmp(argv[i], CUDA_UNROLL_FLAG)) {
+      needs_argument(i, argc, CUDA_UNROLL_FLAG);
+      int value  = atoi(argv[++i]);
+      if (value <= 1) {
+        fprintf(stderr, "error: Invalid flag \"" CUDA_UNROLL_FLAG " %d\" must be >= 1\n", value);
+        abort();
+      }
+      graph.kernel.cuda_unroll = value;
+    }
+#endif
 
     if (!strcmp(argv[i], AND_FLAG)) {
       // Hack: set default value of period for random graph
@@ -914,6 +980,10 @@ App::App(int argc, char **argv)
   }
   
   check();
+  
+#ifdef ENABLE_CUDA
+  init_cuda_support(graphs);
+#endif
 }
 
 void App::check() const
@@ -1086,6 +1156,11 @@ long long count_flops_per_task(const TaskGraph &g, long timestep, long point)
     long iterations = select_imbalance_iterations(g.kernel, g.graph_index, timestep, point);
     return 2 * 64 * iterations + 64;
   }
+  
+#ifdef ENABLE_CUDA
+  case KernelType::CUDA_COMPUTE_BOUND:
+    return 2 * g.kernel.nb_blocks * g.kernel.threads_per_block * g.kernel.iterations * g.kernel.cuda_unroll;
+#endif
 
   default:
     assert(false && "unimplemented kernel type");
@@ -1112,6 +1187,10 @@ long long count_bytes_per_task(const TaskGraph &g, long timestep, long point)
   case KernelType::IO_BOUND:
   case KernelType::LOAD_IMBALANCE:
     return 0;
+#ifdef ENABLE_CUDA
+  case KernelType::CUDA_COMPUTE_BOUND:
+    return 0;
+#endif
   default:
     assert(false && "unimplemented kernel type");
   };
@@ -1248,5 +1327,9 @@ void App::report_timing(double elapsed_seconds) const
 
 #ifdef DEBUG_CORE
   printf("Task Graph Execution Mask %llx\n", has_executed_graph.load());
+#endif
+  
+#ifdef ENABLE_CUDA
+  fini_cuda_support();
 #endif
 }
