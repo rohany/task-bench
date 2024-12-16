@@ -1117,10 +1117,10 @@ long long count_bytes_per_task(const TaskGraph &g, long timestep, long point)
   };
 }
 
-static long long count_flops(const TaskGraph &g)
+static long long count_flops(const TaskGraph &g, int skipped_iters = 0)
 {
   long long flops = 0;
-  for (long t = 0; t < g.timesteps; ++t) {
+  for (long t = skipped_iters; t < g.timesteps; ++t) {
     long offset = g.offset_at_timestep(t);
     long width = g.width_at_timestep(t);
 
@@ -1155,7 +1155,7 @@ static std::tuple<long, long> clamp(long start, long end, long min_value, long m
   }
 }
 
-void App::report_timing(double elapsed_seconds) const
+void App::report_timing(double elapsed_seconds, int skipped_iters) const
 {
   long long total_num_tasks = 0;
   long long total_num_deps = 0;
@@ -1216,7 +1216,7 @@ void App::report_timing(double elapsed_seconds) const
     total_num_deps += num_deps;
     total_local_deps += local_deps;
     total_nonlocal_deps += nonlocal_deps;
-    flops += count_flops(g);
+    flops += count_flops(g, skipped_iters);
     bytes += count_bytes(g);
     local_transfer += local_deps * g.output_bytes_per_task;
     nonlocal_transfer += nonlocal_deps * g.output_bytes_per_task;
