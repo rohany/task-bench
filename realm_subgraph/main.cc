@@ -1378,6 +1378,8 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
                                           scratch_ptr,
                                           leaf_buffer,
                                           leaf_bufsize);
+	  // If compiling, wait for any pending work to finish too.
+	  postcondition.wait();
           start_time = Clock::current_time_in_nanoseconds();
         }
 
