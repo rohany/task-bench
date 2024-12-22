@@ -1399,6 +1399,8 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
                                           scratch_ptr,
                                           leaf_buffer,
                                           leaf_bufsize);
+	  // If compiling, wait for any pending work to finish too.
+	  postcondition.wait();
           start_time = Clock::current_time_in_nanoseconds();
         }
 
@@ -1754,7 +1756,12 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     assert(ok);
   }
 
-  app.report_timing((last_stop - first_start)/1e9);
+  // We skip the first period iterations.
+  assert(graphs.size() == 1);
+  auto graph = graphs[0];
+  long period = lcm(num_fields, graph.timestep_period());
+  period *= subgraph_iters;
+  app.report_timing((last_stop - first_start)/1e9, period);
 }
 
 int main(int argc, char **argv)

@@ -83,7 +83,7 @@ struct App {
   App(int argc, char **argv);
   void check() const;
   void display() const;
-  void report_timing(double elapsed_seconds) const;
+  void report_timing(double elapsed_seconds, int skipped_iters = 0) const;
 };
 
 // Make sure core types are POD
