@@ -230,7 +230,6 @@ void init_gpu_task(const void *args, size_t arglen, const void *userdata,
   }
   std::vector<TaskGraph> graphs(1, a.graph);
   init_cuda_support(graphs, p.id);
-  std::cout << "Finished GPU initialization on processor: " << p << std::endl;
 }
 
 void leaf_task(const void *args, size_t arglen, const void *userdata,

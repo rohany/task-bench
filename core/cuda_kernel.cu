@@ -38,7 +38,7 @@ void init_cuda_support(const std::vector<TaskGraph> &graphs, uint64_t gpuid)
   int nb_blocks = graphs[0].kernel.nb_blocks;
   int threads_per_block = graphs[0].kernel.threads_per_block;
   int cuda_unroll = graphs[0].kernel.cuda_unroll;
-  printf("init cuda support nb_blocks %d, threads_per_block %d, cuda_unroll %d\n", nb_blocks, threads_per_block, cuda_unroll);
+  // printf("init cuda support nb_blocks %d, threads_per_block %d, cuda_unroll %d\n", nb_blocks, threads_per_block, cuda_unroll);
   void* bufptr;
   gpuErrchk( cudaMalloc(&bufptr, sizeof(double) * nb_blocks * threads_per_block * cuda_unroll) );
   local_buffer[gpuid] = (char*)bufptr;

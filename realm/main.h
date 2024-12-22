@@ -41,6 +41,7 @@ public:
   Realm::Barrier last_start;
   Realm::Barrier first_stop;
   Realm::Barrier last_stop;
+  Realm::Processor tgt_proc;
   // std::vector<TaskGraph> graphs;
   // std::vector<std::vector<RegionInstance> > task_results;
   // std::vector<std::vector<RegionInstance> > raw_exchange;
@@ -63,5 +64,11 @@ public:
 };
 
 TYPE_IS_SERIALIZABLE(LeafArgs);
+
+struct InitArgs {
+public:
+  TaskGraph graph;
+};
+TYPE_IS_SERIALIZABLE(InitArgs);
 
 #endif
