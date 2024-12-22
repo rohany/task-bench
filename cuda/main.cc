@@ -48,24 +48,31 @@ int main(int argc, char* argv[]) {
   App app(argc, argv);
   if (rank == 0) app.display();
 
-  std::vector<cudaStream_t> streams(8);
-  for (size_t i = 0; i < 8; i++) {
+  assert(app.graphs.size() == 1);
+  auto& graph = app.graphs[0];
+
+  std::vector<std::vector<char> > scratch;
+  long first_point = rank * graph.max_width / n_ranks;
+  long last_point = (rank + 1) * graph.max_width / n_ranks - 1;
+  long n_points = last_point - first_point + 1;
+
+  size_t scratch_bytes = graph.scratch_bytes_per_task;
+  scratch.emplace_back(scratch_bytes * n_points);
+  TaskGraph::prepare_scratch(scratch.back().data(), scratch.back().size());
+
+  size_t ngpus = 8;
+  for (size_t i = 0; i < ngpus; i++) {
     CUDACHECK(cudaSetDevice(i));
-    CUDACHECK(cudaStreamCreate(&streams[i]));
     init_cuda_support(app.graphs, i);
   }
 
+  size_t points_per_gpu = n_points / ngpus;
+  assert(n_points % ngpus == 0);
 
-  // TODO (rohany): Might need to be a device pointer.
-  std::vector<std::vector<char> > scratch;
-  for (auto graph : app.graphs) {
-    long first_point = rank * graph.max_width / n_ranks;
-    long last_point = (rank + 1) * graph.max_width / n_ranks - 1;
-    long n_points = last_point - first_point + 1;
-
-    size_t scratch_bytes = graph.scratch_bytes_per_task;
-    scratch.emplace_back(scratch_bytes * n_points);
-    TaskGraph::prepare_scratch(scratch.back().data(), scratch.back().size());
+  std::vector<cudaStream_t> streams(n_points);
+  for (size_t i = 0; i < n_points; i++) {
+    CUDACHECK(cudaSetDevice(i / points_per_gpu));
+    CUDACHECK(cudaStreamCreate(&streams[i]));
   }
 
   double elapsed_time = 0.0;
@@ -133,7 +140,7 @@ int main(int argc, char* argv[]) {
 
         auto &point_outputs = outputs[point_index];
         point_outputs.resize(graph.output_bytes_per_task);
-	CUDACHECK(cudaSetDevice(point % streams.size()));
+	CUDACHECK(cudaSetDevice(point / points_per_gpu));
 	CUDACHECK(cudaEventCreate(&events[point], cudaEventDisableTiming));
       }
 
@@ -163,13 +170,8 @@ int main(int argc, char* argv[]) {
         auto &deps = dependencies[dset];
         auto &rev_deps = reverse_dependencies[dset];
 
-	// TODO (rohany): Let's start with just assuming that each rank
-	//  holds exactly one point. Not having tags makes this implementation
-	//  a little difficult.
-	// assert(first_point == last_point);
-
         for (long point = first_point; point <= last_point; ++point) {
-	  CUDACHECK(cudaSetDevice(point % streams.size()));
+	  CUDACHECK(cudaSetDevice(point / points_per_gpu));
           long point_index = point - first_point;
 
           auto &point_inputs = inputs[point_index];
@@ -188,7 +190,7 @@ int main(int argc, char* argv[]) {
                   continue;
                 }
 
-		CUDACHECK(cudaStreamWaitEvent(streams[point % streams.size()], events[dep]));
+		CUDACHECK(cudaStreamWaitEvent(streams[point], events[dep]));
 
                 // Use shared memory for on-node data.
                 if (first_point <= dep && dep <= last_point) {
@@ -239,19 +241,19 @@ int main(int argc, char* argv[]) {
           auto &point_n_inputs = n_inputs[point_index];
           auto &point_output = outputs[point_index];
 
-	  CUDACHECK(cudaSetDevice(point % streams.size()));
+	  CUDACHECK(cudaSetDevice(point / points_per_gpu));
 
           graph.execute_point(timestep, point,
                               point_output.data(), point_output.size(),
                               point_input_ptr.data(), point_input_bytes.data(), point_n_inputs,
-                              scratch_ptr + scratch_bytes * point_index, scratch_bytes, streams[point % streams.size()], point % streams.size());
-	  CUDACHECK(cudaEventRecord(events[point], streams[point % streams.size()]));
+                              scratch_ptr + scratch_bytes * point_index, scratch_bytes, streams[point], point / points_per_gpu);
+	  CUDACHECK(cudaEventRecord(events[point], streams[point]));
         }
       }
     }
 
-    for (size_t i = 0; i < 8; i++) {
-      CUDACHECK(cudaSetDevice(i));
+    for (size_t i = 0; i < n_points; i++) {
+      CUDACHECK(cudaSetDevice(i / points_per_gpu));
       CUDACHECK(cudaStreamSynchronize(streams[i]));
     }
 

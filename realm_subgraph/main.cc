@@ -405,8 +405,11 @@ static Event define_subgraph(Subgraph &subgraph,
         ser << input_bytes;
         assert(ser.bytes_left() == 0);
 
+	size_t n_points = last_point - first_point + 1;
+	size_t points_per_proc = n_points / procs.size();
+
         SubgraphDefinition::TaskDesc task;
-        task.proc = procs[point % procs.size()];
+        task.proc = procs[point / points_per_proc];
         task.task_id = Processor::TaskFuncID(LEAF_TASK);
         task.args = ByteArray(leaf_buffer, leaf_bufsize);
         task.prs = ProfilingRequestSet();
