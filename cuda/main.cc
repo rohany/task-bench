@@ -133,7 +133,7 @@ int main(int argc, char* argv[]) {
 
         auto &point_outputs = outputs[point_index];
         point_outputs.resize(graph.output_bytes_per_task);
-	CUDACHECK(cudaSetDevice(point));
+	CUDACHECK(cudaSetDevice(point % streams.size()));
 	CUDACHECK(cudaEventCreate(&events[point], cudaEventDisableTiming));
       }
 
@@ -169,7 +169,7 @@ int main(int argc, char* argv[]) {
 	// assert(first_point == last_point);
 
         for (long point = first_point; point <= last_point; ++point) {
-	  CUDACHECK(cudaSetDevice(point));
+	  CUDACHECK(cudaSetDevice(point % streams.size()));
           long point_index = point - first_point;
 
           auto &point_inputs = inputs[point_index];
@@ -188,7 +188,7 @@ int main(int argc, char* argv[]) {
                   continue;
                 }
 
-		CUDACHECK(cudaStreamWaitEvent(streams[point], events[dep]));
+		CUDACHECK(cudaStreamWaitEvent(streams[point % streams.size()], events[dep]));
 
                 // Use shared memory for on-node data.
                 if (first_point <= dep && dep <= last_point) {
@@ -239,13 +239,13 @@ int main(int argc, char* argv[]) {
           auto &point_n_inputs = n_inputs[point_index];
           auto &point_output = outputs[point_index];
 
-	  CUDACHECK(cudaSetDevice(point));
+	  CUDACHECK(cudaSetDevice(point % streams.size()));
 
           graph.execute_point(timestep, point,
                               point_output.data(), point_output.size(),
                               point_input_ptr.data(), point_input_bytes.data(), point_n_inputs,
-                              scratch_ptr + scratch_bytes * point_index, scratch_bytes, streams[point], point);
-	  CUDACHECK(cudaEventRecord(events[point], streams[point]));
+                              scratch_ptr + scratch_bytes * point_index, scratch_bytes, streams[point % streams.size()], point % streams.size());
+	  CUDACHECK(cudaEventRecord(events[point], streams[point % streams.size()]));
         }
       }
     }
