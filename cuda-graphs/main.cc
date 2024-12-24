@@ -164,10 +164,7 @@ int main(int argc, char* argv[]) {
       cudaGraph_t cuGraph;
       std::map<std::pair<long, long>, cudaGraphNode_t> points;
       bool have_graph = false;
-      std::vector<cudaGraphNode_t> input_deps;
       for (long timestep = 0; timestep < graph.timesteps; ++timestep) {
-	
-
 	// TODO (rohany): Update this ... 
 	if (!have_graph && timestep % 5 == 0) {
           CUDACHECK(cudaSetDevice(0));
@@ -190,6 +187,8 @@ int main(int argc, char* argv[]) {
         auto &deps = dependencies[dset];
         auto &rev_deps = reverse_dependencies[dset];
 
+	std::map<long, std::vector<cudaGraphNode_t>> input_deps;
+
         for (long point = first_point; point <= last_point; ++point) {
 	  CUDACHECK(cudaSetDevice(point / points_per_gpu));
           long point_index = point - first_point;
@@ -201,8 +200,6 @@ int main(int argc, char* argv[]) {
           auto &point_deps = deps[point_index];
           auto &point_rev_deps = rev_deps[point_index];
 
-	  input_deps.clear();
-
           /* Receive */
           point_n_inputs = 0;
           if (point >= offset && point < offset + width) {
@@ -212,7 +209,7 @@ int main(int argc, char* argv[]) {
                   continue;
                 }
 
-		input_deps.push_back(points[{timestep - 1, dep}]);
+		input_deps[point].push_back(points[{timestep - 1, dep}]);
 
                 // Use shared memory for on-node data.
                 if (first_point <= dep && dep <= last_point) {
@@ -273,7 +270,7 @@ int main(int argc, char* argv[]) {
 	  cudaGraph_t subgraph;
 	  CUDACHECK(cudaStreamEndCapture(streams[point], &subgraph));
 	  cudaGraphNode_t node;
-	  CUDACHECK(cudaGraphAddChildGraphNode(&node, cuGraph, input_deps.data(), input_deps.size(), subgraph));
+	  CUDACHECK(cudaGraphAddChildGraphNode(&node, cuGraph, input_deps[point].data(), input_deps[point].size(), subgraph));
 	  points[{timestep, point}] = node;
         }
 
