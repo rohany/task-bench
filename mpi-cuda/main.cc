@@ -134,6 +134,7 @@ int main(int argc, char* argv[]) {
       // TODO (rohany): Just get all the events (who cares about scaling???)
 
       std::vector<cudaEvent_t> local_events(n_points);
+      std::vector<cudaEvent_t> local_ipc_event_sources(n_points);
       std::vector<cudaIpcEventHandle_t> local_ipc_events(n_points);
 
       for (long point = first_point; point <= last_point; ++point) {
@@ -155,8 +156,9 @@ int main(int argc, char* argv[]) {
 
         auto &point_outputs = outputs[point_index];
         point_outputs.resize(graph.output_bytes_per_task);
-	CUDACHECK(cudaEventCreate(&local_events[point_index], cudaEventDisableTiming | cudaEventInterprocess));
-	CUDACHECK(cudaIpcGetEventHandle(&local_ipc_events[point_index], local_events[point_index]));
+	CUDACHECK(cudaEventCreate(&local_events[point_index], cudaEventDisableTiming));
+	CUDACHECK(cudaEventCreate(&local_ipc_event_sources[point_index], cudaEventDisableTiming | cudaEventInterprocess));
+	CUDACHECK(cudaIpcGetEventHandle(&local_ipc_events[point_index], local_ipc_event_sources[point_index]));
       }
 
       MPI_Barrier(MPI_COMM_WORLD);
@@ -277,11 +279,6 @@ int main(int argc, char* argv[]) {
 		  // Wait on local cuda events.
 		  CUDACHECK(cudaStreamWaitEvent(streams[point_index], local_events[dep - first_point]));
                 } else {
-		  // cudaIpcEventHandle_t* ptr = (cudaIpcEventHandle_t*)(point_inputs[point_n_inputs].data() + graph.output_bytes_per_task);
-		  // cudaEvent_t local;
-		  // CUDACHECK(cudaIpcOpenEventHandle(&local, *ptr));
-		  // CUDACHECK(cudaStreamWaitEvent(streams[point_index], local));
-		  // CUDACHECK(cudaEventDestroy(local));
 		  // Wait on remote events.
 		  CUDACHECK(cudaStreamWaitEvent(streams[point_index], remote_events[dep]));
                 }
@@ -289,6 +286,11 @@ int main(int argc, char* argv[]) {
             }
           }
         }
+
+	// Need to ensure all processes wait on the right events before launching kernels
+	// and recording events, otherwise one rank might launch kernels before another
+	// rank finishes recording.
+	MPI_Barrier(MPI_COMM_WORLD);
 
         for (long point = std::max(first_point, offset); point <= std::min(last_point, offset + width - 1); ++point) {
           long point_index = point - first_point;
@@ -303,7 +305,7 @@ int main(int argc, char* argv[]) {
                               point_input_ptr.data(), point_input_bytes.data(), point_n_inputs,
                               scratch_ptr + scratch_bytes * point_index, scratch_bytes, streams[point_index], 0);
           CUDACHECK(cudaEventRecord(local_events[point_index], streams[point_index]));
-	  // CUDACHECK(cudaIpcGetEventHandle(&ipc_events[point_index], local_events[point_index]));
+          CUDACHECK(cudaEventRecord(local_ipc_event_sources[point_index], streams[point_index]));
         }
       }
     }
