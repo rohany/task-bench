@@ -807,6 +807,7 @@ static Event instantiate_subgraph(Subgraph &subgraph,
   std::vector<Event> postconditions;
   return subgraph.instantiate(global_ser.get_buffer(), global_ser.bytes_used(),
                               ProfilingRequestSet(),
+			      SubgraphInstantiationProfilingRequestsDesc(),
                               preconditions,
                               postconditions,
                               subgraph_ready);
@@ -1380,6 +1381,9 @@ void shard_task(const void *args, size_t arglen, const void *userdata,
                                           leaf_bufsize);
 	  // If compiling, wait for any pending work to finish too.
 	  postcondition.wait();
+          sync.arrive(1);
+          sync.wait();
+          sync = sync.advance_barrier();
           start_time = Clock::current_time_in_nanoseconds();
         }
 
@@ -1485,15 +1489,18 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     query.only_kind(Processor::LOC_PROC);
     procs.insert(procs.end(), query.begin(), query.end());
   }
-  // long num_procs = procs.size();
-  long num_procs = 1;
-  std::vector<Processor> target_procs;
-  // TODO (rohany): Smarter way to do this ... 
-  for (auto proc : procs) {
-    if (proc != p) {
-      target_procs.push_back(proc);
-    }
+  // Group processors by address space.
+  std::map<AddressSpace, std::vector<Processor>> procs_by_space;
+  for (auto& it : procs) {
+    procs_by_space[it.address_space()].push_back(it);
   }
+  procs.clear();
+  // Consider the "processors" to use as just the
+  // shard launchers on each node.
+  for (auto& it : procs_by_space) {
+    procs.push_back(it.second.front());
+  }
+  long num_procs = procs.size();
 
   std::map<Processor, Memory> proc_sysmems;
   std::map<Processor, Memory> proc_regmems;
@@ -1605,7 +1612,8 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
 
       for (long proc_index = 0; proc_index < num_procs; ++proc_index) {
         auto proc = procs.at(proc_index);
-        auto memory = proc_sysmems.at(proc);
+        // auto memory = proc_sysmems.at(proc);
+        auto memory = proc_regmems.at(proc);
 
         long first_point = proc_index * graph.max_width / num_procs;
         long last_point = (proc_index + 1) * graph.max_width / num_procs - 1;
@@ -1644,6 +1652,12 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
   for (long proc_index = 0; proc_index < num_procs; ++proc_index) {
     auto proc = procs.at(proc_index);
     // target_procs[0] = proc;
+    
+    std::vector<Processor> target_procs;
+    auto& node_procs = procs_by_space[proc_index];
+    for (size_t i = 1; i < node_procs.size(); i++) {
+      target_procs.push_back(node_procs[i]);
+    }
 
     ShardArgs args;
     args.proc_index = proc_index;
@@ -1651,7 +1665,8 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     args.num_fields = num_fields;
     args.subgraph_iters = subgraph_iters;
     args.force_copies = force_copies;
-    args.sysmem = proc_sysmems[proc];
+    // args.sysmem = proc_sysmems[proc];
+    args.sysmem = proc_regmems[proc];
     args.regmem = proc_regmems[proc];
     args.sync = sync_bar;
     args.first_start = first_start_bar;
