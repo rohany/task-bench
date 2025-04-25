@@ -448,10 +448,8 @@ static Event define_subgraph(Subgraph &subgraph,
       // RAW dependencies
       for (auto interval : graph.reverse_dependencies(next_dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
-          // TODO (rohany): I don't understand how this works ... 
           // We don't need arrivals for points inside this shard.
-	  // if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
-	  if ((timestep + num_fields < stop_timestep))
+	  if ((first_point <= dep && dep <= last_point) && (timestep + num_fields < stop_timestep))
 	    continue;
 
           global_ser << Barrier::NO_BARRIER;
@@ -693,6 +691,7 @@ static Event instantiate_subgraph(Subgraph &subgraph,
 	  // If the dependence is within our set of points, we only need it if the timestep
 	  // is not in the current subgraph.
 	  bool add = (dep < first_point || dep > last_point) || ((first_point <= dep && dep <= last_point) && (timestep == start_timestep));
+	  // bool in_map = tasks.find({timestep - 1, dep}) != tasks.end();
 	  // assert((!in_map) == add);
 	  if (!add)
             continue;
