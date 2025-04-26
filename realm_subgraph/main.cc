@@ -360,12 +360,10 @@ static Event define_subgraph(Subgraph &subgraph,
           if (dep >= next_offset && dep < next_offset + next_width) {
             // Only copy when the dependent task doesn't live in the same address space.
             if (!force_copies && result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
-	      // preconditions.push_back({SubgraphDefinition::OPKIND_EXT_PRECOND, next_precondition++});
-	      // I think we unilaterally get a task dependency here?
-	      // if (task_points.find({last_fid, dep}) == task_points.end()) {
-              //   std::cout << "Didn't find dep for: " << point << " " << timestep << " " << last_fid << " " << dep << std::endl;
-	      // }
-	      if (timestep >= start_timestep + num_fields) {
+              // This is a num_fields - 1 because a task t at point p writes to field f. It needs
+	      // to catch a dependence on task (t - (num_fields - 1), p), because that task reads
+	      // from field f (it reads the results of t - num_fields).
+	      if (timestep >= (start_timestep + num_fields - 1)) {
 	        preconditions.push_back({SubgraphDefinition::OPKIND_TASK, task_points.at({last_fid, dep})});
 	      } else {
 	        preconditions.push_back({SubgraphDefinition::OPKIND_EXT_PRECOND, next_precondition++});
@@ -497,6 +495,8 @@ static Event define_subgraph(Subgraph &subgraph,
             assert(false);
 	  }
 
+	  // RAW dependencies only need to be added for out-of-node dependencies or for
+	  // the final timestep.
           bool add = (dep < first_point || dep > last_point) || (timestep == (stop_timestep - 1));
           if (!add)
             continue;
@@ -570,14 +570,16 @@ static Event define_subgraph(Subgraph &subgraph,
       //   definition.interpolations.push_back(interp);
 
       //   // No dependency, it's an unconditional arrival
-      // // }
+      // }
 
       // WAR dependencies
       for (auto interval : graph.dependencies(dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
-          // bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
-          // if (!add)
-          //   continue;
+          // We only need WAR dependencies for out-of-node dependencies or for the final
+	  // num_fields timesteps, which are carried across the subgraph.
+          bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
+          if (!add)
+            continue;
 
           global_ser << Barrier::NO_BARRIER;
           size_t complete_offset = global_ser.bytes_used() - sizeof(Barrier);
@@ -692,9 +694,6 @@ static Event instantiate_subgraph(Subgraph &subgraph,
 
   std::set<std::pair<long, long>> tasks;
 
-  // TODO (rohany): Temporary ... 
-  // std::map<std::tuple<long, long, long>, std::pair<SubgraphDefinition::OpKind, size_t>> op_producers;
-
   for (long timestep = start_timestep; timestep < stop_timestep; ++timestep) {
     long dset = graph.dependence_set_at_timestep(timestep);
     long next_dset = graph.dependence_set_at_timestep(timestep + 1);
@@ -719,14 +718,9 @@ static Event instantiate_subgraph(Subgraph &subgraph,
           bool add = (dep < first_point || dep > last_point) || (timestep == start_timestep);
           if (!add)
             continue;
-	  // auto& prod = op_producers[last_fid];
-	  // if (prod.find({dep, point}) != prod.end())
-          //   continue;
-          // // assert((!in_map) == add);
 
           Barrier &ready = raw_in.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
           preconditions.push_back(ready.get_previous_phase());
-	  // std::cout << "AAA RAW Point: " << point << " " << timestep << " " << ready << " waiting on barrier: " << ready.get_previous_phase().has_triggered() << " " << ready.get_previous_phase() << std::endl;
         }
       }
 
@@ -742,10 +736,9 @@ static Event instantiate_subgraph(Subgraph &subgraph,
           if (dep >= next_offset && dep < next_offset + next_width) {
             // Only copy when the dependent task doesn't live in the same address space.
             if (!force_copies && result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
-              if (timestep < start_timestep + num_fields) {
+              if (timestep < (start_timestep + num_fields - 1)) {
                 Barrier &ready = war_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
                 preconditions.push_back(ready.get_previous_phase());
-	        // std::cout << "AAA WAR Point C1: " << point << " " << timestep << " " << stop_timestep << " " << dep << " waiting on barrier: " << ready.get_previous_phase().has_triggered() << " " <<  ready.get_previous_phase() << std::endl;
 	      }
             }
           }
@@ -760,7 +753,6 @@ static Event instantiate_subgraph(Subgraph &subgraph,
             if (force_copies || !result_base.at(graph_index).at(dep).at(last_fid - FID_FIRST)) {
               Barrier &ready = war_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
               preconditions.push_back(ready.get_previous_phase());
-	      // std::cout << "AAA WAR Point C2: " << point << " waiting on barrier: " << ready.get_previous_phase().has_triggered() << " " << ready.get_previous_phase() << std::endl;
             }
           }
         }
@@ -774,22 +766,12 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       // RAW dependencies
       for (auto interval : graph.reverse_dependencies(next_dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
-          // bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
-          // if (!add) {
-          //   // std::cout << "RAW SKIPPING ARRIVAL AT: " << raw_out.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep) << std::endl;
-          //   continue;
-	  // }
-	  
-          // The currently broken stuff.
           bool add = (dep < first_point || dep > last_point) || (timestep == (stop_timestep - 1));
           if (!add)
             continue;
 
           Barrier &complete = raw_out.at(graph_index).at(point - first_point).at(fid - FID_FIRST).at(dep);
           global_ser << complete;
-
-	  // std::cout << "AAA RAW Point " << point << " arriving on: " << complete << std::endl;
-	  // std::cout << "RAW Point " << point << " " << timestep << " " << dep << " arriving on: " << complete << std::endl;
 
           // Nothing to do, already completely described by subgraph and interpolations
         }
@@ -806,13 +788,11 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       // WAR dependencies
       for (auto interval : graph.dependencies(dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
-          // bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
-          // if (!add)
-          //   continue;
+          bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
+          if (!add)
+            continue;
           Barrier &complete = war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
           global_ser << complete;
-	  // std::cout << "AAA WAR Point " << point << " arriving on: " << complete << std::endl;
-	  // std::cout << "WAR Point " << point << " " << timestep << " " << dep << " arriving on: " << complete << std::endl;
         }
       }
 
@@ -822,6 +802,11 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       //   Barrier &barrier = war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
       //   global_ser << barrier;
       // }
+
+      // Realm barriers must be arrived on in-order i.e. there cannot be gaps
+      // in the generations. So, we have to align our advances with the arrivals
+      // we actually plan on doing above. We do that by using the same conditions
+      // as for if we are adding the dependencies themselves.
 
       for (auto &bar : raw_in.at(graph_index).at(point - first_point).at(fid - FID_FIRST)) {
 	auto dep = bar.first;
@@ -842,10 +827,18 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       }
 
       for (auto &bar : war_in.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST)) {
+        auto dep = bar.first;
+        bool add = (dep < first_point || dep > last_point) || (timestep < (start_timestep + num_fields - 1));
+        if (!add)
+          continue;
         bar.second = bar.second.advance_barrier();
       }
 
       for (auto &bar : war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST)) {
+        auto dep = bar.first;
+        bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
+        if (!add)
+          continue;
         bar.second = bar.second.advance_barrier();
       }
     }
