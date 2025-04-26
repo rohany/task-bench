@@ -577,7 +577,7 @@ static Event define_subgraph(Subgraph &subgraph,
         for (long dep = interval.first; dep <= interval.second; ++dep) {
           // We only need WAR dependencies for out-of-node dependencies or for the final
 	  // num_fields timesteps, which are carried across the subgraph.
-          bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
+          bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields + 1));
           if (!add)
             continue;
 
@@ -788,7 +788,7 @@ static Event instantiate_subgraph(Subgraph &subgraph,
       // WAR dependencies
       for (auto interval : graph.dependencies(dset, point)) {
         for (long dep = interval.first; dep <= interval.second; ++dep) {
-          bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
+          bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields + 1));
           if (!add)
             continue;
           Barrier &complete = war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST).at(dep);
@@ -836,7 +836,7 @@ static Event instantiate_subgraph(Subgraph &subgraph,
 
       for (auto &bar : war_out.at(graph_index).at(point - first_point).at(last_fid - FID_FIRST)) {
         auto dep = bar.first;
-        bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields));
+        bool add = (dep < first_point || dep > last_point) || (timestep >= (stop_timestep - num_fields + 1));
         if (!add)
           continue;
         bar.second = bar.second.advance_barrier();
