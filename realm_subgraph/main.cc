@@ -284,7 +284,9 @@ static Event define_subgraph(Subgraph &subgraph,
   std::vector<std::pair<SubgraphDefinition::OpKind, size_t>> preconditions;
   // std::vector<size_t> preconditions;
   // std::vector<unsigned> task_preconditions;
-  std::vector<std::vector<size_t> > copy_postconditions(num_fields);
+
+  // point -> field -> copies.
+  std::vector<std::map<long, std::vector<size_t> >> copy_postconditions(num_fields);
   size_t next_precondition = 0;
 
   // Maintain a map of field writes and points to operations?
@@ -436,7 +438,7 @@ static Event define_subgraph(Subgraph &subgraph,
           definition.dependencies.push_back(precondition_dep);
         }
 
-        for (auto precondition : copy_postconditions.at(fid - FID_FIRST)) {
+        for (auto precondition : copy_postconditions.at(fid - FID_FIRST)[point]) {
           SubgraphDefinition::Dependency precondition_dep;
           precondition_dep.src_op_kind = SubgraphDefinition::OpKind::OPKIND_COPY;
           precondition_dep.src_op_index = precondition;
@@ -449,7 +451,7 @@ static Event define_subgraph(Subgraph &subgraph,
         }
       }
 
-      copy_postconditions.at(fid - FID_FIRST).clear();
+      copy_postconditions.at(fid - FID_FIRST)[point].clear();
 
       // RAW dependencies
       for (auto interval : graph.reverse_dependencies(next_dset, point)) {
@@ -469,7 +471,7 @@ static Event define_subgraph(Subgraph &subgraph,
                   .at(slot),
                 fid, sizeof(char)));
 
-              copy_postconditions.at(fid - FID_FIRST).push_back(copy_postcondition);
+              copy_postconditions.at(fid - FID_FIRST)[point].push_back(copy_postcondition);
 
               if (task_postcondition != SIZE_MAX) {
                 SubgraphDefinition::Dependency task_dep;
@@ -654,12 +656,11 @@ static Event define_subgraph(Subgraph &subgraph,
   }
 
 
-  definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::INSTANTIATION_ORDER;
-  // if (replayable) {
-  //   definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::INSTANTIATION_ORDER;
-  // } else {
-  //   definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::ONE_SHOT;
-  // }
+  if (replayable) {
+    definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::INSTANTIATION_ORDER;
+  } else {
+    definition.concurrency_mode = SubgraphDefinition::ConcurrencyMode::ONE_SHOT;
+  }
 
   std::cout << "TASKS: " << definition.tasks.size() << " EDGES: " << definition.dependencies.size() << " ARRIVALS: " << definition.arrivals.size() << " COPIES: " << definition.copies.size() << std::endl;
 
