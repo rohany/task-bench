@@ -23,7 +23,7 @@ DEBUG           ?= 0		# Include debugging symbols
 MAX_DIM         ?= 3		# Maximum number of dimensions
 OUTPUT_LEVEL    ?= LEVEL_DEBUG	# Compile time logging level
 USE_CUDA        ?= 0		# Include CUDA support (requires CUDA)
-USE_GASNET      ?= 0		# Include GASNet support (requires GASNet)
+USE_GASNET      ?= 1		# Include GASNet support (requires GASNet)
 USE_HDF         ?= 0		# Include HDF5 support (requires HDF5)
 ALT_MAPPERS     ?= 0		# Include alternative mappers (not recommended)
 
@@ -40,7 +40,7 @@ NVCC_FLAGS	?=
 GASNET_FLAGS	?=
 LD_FLAGS	?=
 
-CC_FLAGS += -std=c++11 -I../core
+CC_FLAGS += -std=c++17 -I../core
 LD_FLAGS += -L../core -lcore_s
 
 include ../core/make_blas.mk

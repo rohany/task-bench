@@ -193,12 +193,19 @@ public:
                              const SliceTaskInput &input,
                                    SliceTaskOutput &output,
             std::map<Domain,std::vector<TaskSlice> > &cached_slices) const;
+  std::vector<Processor> target_cpus;
 };
 
 TaskBenchMapper::TaskBenchMapper(MapperRuntime *rt, Machine machine, Processor local,
                                  const char *mapper_name)
   : DefaultMapper(rt, machine, local, mapper_name)
 {
+  // Hold onto the "other" cpus, since we'll use the top-level task
+  // to launch work (and the subgraph implementation isn't good at
+  // yielding back yet).
+  for (size_t i = 1; i < local_cpus.size(); i++) {
+    target_cpus.push_back(local_cpus[i]);
+  }
 }
 
 void TaskBenchMapper::select_sharding_functor(
@@ -284,7 +291,7 @@ void TaskBenchMapper::slice_task(const MapperContext      ctx,
   {
     case Processor::LOC_PROC:
       {
-        task_bench_slice_task(task, local_cpus, remote_cpus,
+        task_bench_slice_task(task, target_cpus, remote_cpus,
                            input, output, cpu_slices_cache);
         break;
       }
@@ -647,14 +654,19 @@ static long lcm(long a, long b) {
 void LegionApp::execute_main_loop()
 {
   long period = num_fields;
+  assert(graphs.size() == 1);
   for (auto g : graphs) {
     period = lcm(period, g.timestep_period());
   }
+  // Group more iterations into a single trace.
+  period *= 5;
 
   long max_timesteps = LONG_MIN;
   for (auto g : graphs) {
     max_timesteps = std::max(max_timesteps, g.timesteps);
   }
+
+  assert(max_timesteps % period == 0);
 
   for (long t = 0; t < max_timesteps; ++t) {
     if (t % period == 0 && t + period - 1 < max_timesteps) {
@@ -689,6 +701,7 @@ void LegionApp::init(size_t idx)
         RegionRequirement(scratch, 0 /* default projection */,
                           WRITE_DISCARD, EXCLUSIVE, sratch_region, tag)
         .add_field(fout));
+      launcher.elide_future_return = true;
 
       runtime->execute_index_space(ctx, launcher);
     }
@@ -717,6 +730,7 @@ void LegionApp::execute_timestep(size_t idx, long t)
   IndexLauncher launcher(TID_LEAF, bounds,
                          TaskArgument(&payload, sizeof(payload)), ArgumentMap());
   MappingTagID tag = exact_instance ? Legion::Mapping::DefaultMapper::EXACT_REGION : 0;
+  tag |= Legion::Mapping::DefaultMapper::PREFER_RDMA_MEMORY;
   // This needs to be write-discard so that we don't catch a
   // dependence on the same point in the previous timestep, unless
   // that task is an explicit dependence. Note: there may still be a
@@ -743,6 +757,7 @@ void LegionApp::execute_timestep(size_t idx, long t)
       .add_field(fout));
   }
 
+  launcher.elide_future_return = true;
   runtime->execute_index_space(ctx, launcher);
 }
 
