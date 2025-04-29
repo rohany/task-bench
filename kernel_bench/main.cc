@@ -2,6 +2,8 @@
 #include <assert.h>
 #include <string.h>
 #include <algorithm> 
+#include <sched.h>
+#include <pthread.h>
 #include "core.h"
 #include "timer.h"
 
