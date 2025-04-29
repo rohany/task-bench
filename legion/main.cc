@@ -20,8 +20,10 @@
 
 #include "legion.h"
 #include "mappers/default_mapper.h"
+#include "realm/cuda/cuda_module.h"
 
 #include "core.h"
+#include "cuda_kernel.h"
 
 using namespace Legion;
 using namespace Legion::Mapping;
@@ -30,6 +32,7 @@ enum TaskIDs {
   TID_TOP,
   TID_INIT,
   TID_LEAF,
+  TID_INIT_GPU,
 };
 
 enum ShardingFunctorIDs {
@@ -193,19 +196,12 @@ public:
                              const SliceTaskInput &input,
                                    SliceTaskOutput &output,
             std::map<Domain,std::vector<TaskSlice> > &cached_slices) const;
-  std::vector<Processor> target_cpus;
 };
 
 TaskBenchMapper::TaskBenchMapper(MapperRuntime *rt, Machine machine, Processor local,
                                  const char *mapper_name)
   : DefaultMapper(rt, machine, local, mapper_name)
 {
-  // Hold onto the "other" cpus, since we'll use the top-level task
-  // to launch work (and the subgraph implementation isn't good at
-  // yielding back yet).
-  for (size_t i = 1; i < local_cpus.size(); i++) {
-    target_cpus.push_back(local_cpus[i]);
-  }
 }
 
 void TaskBenchMapper::select_sharding_functor(
@@ -291,7 +287,7 @@ void TaskBenchMapper::slice_task(const MapperContext      ctx,
   {
     case Processor::LOC_PROC:
       {
-        task_bench_slice_task(task, target_cpus, remote_cpus,
+        task_bench_slice_task(task, local_cpus, remote_cpus,
                            input, output, cpu_slices_cache);
         break;
       }
@@ -406,6 +402,18 @@ void init(const Task *task,
   TaskGraph::prepare_scratch(scratch_ptr, scratch_bytes);
 }
 
+void init_gpu(const Task *task,
+              const std::vector<PhysicalRegion> &regions,
+              Context ctx, Runtime *runtime)
+{
+  assert(task->arglen == sizeof(Payload));
+  Payload payload = *reinterpret_cast<Payload *>(task->args);
+  TaskGraph graph = payload.graph;
+  std::vector<TaskGraph> graphs(1, graph);
+  auto proc = Realm::Processor::get_executing_processor();
+  init_cuda_support(graphs, proc.id);
+}
+
 void leaf(const Task *task,
           const std::vector<PhysicalRegion> &regions,
           Context ctx, Runtime *runtime)
@@ -457,9 +465,13 @@ void leaf(const Task *task,
     get_base_and_size(runtime, regions.back(), task->regions.back(), scratch_rect, scratch_ptr, scratch_bytes);
   }
 
+  Realm::Cuda::set_task_ctxsync_required(false);
+  auto proc = Realm::Processor::get_executing_processor();
+  auto stream = Realm::Cuda::get_task_cuda_stream();
+
   graph.execute_point(timestep, point, output_ptr, output_bytes,
                       input_ptrs.data(), input_bytes.data(), input_ptrs.size(),
-                      scratch_ptr, scratch_bytes);
+                      scratch_ptr, scratch_bytes, stream, proc.id);
 }
 
 struct LegionApp : public App {
@@ -706,6 +718,13 @@ void LegionApp::init(size_t idx)
       runtime->execute_index_space(ctx, launcher);
     }
   }
+  // GPU initialization as well.
+  Payload payload;
+  payload.graph = g;
+  IndexLauncher launcher(TID_INIT_GPU, bounds,
+                         TaskArgument(&payload, sizeof(payload)), ArgumentMap());
+  launcher.elide_future_return = true;
+  runtime->execute_index_space(ctx, launcher);
 }
 
 void LegionApp::execute_timestep(size_t idx, long t)
@@ -806,8 +825,15 @@ int main(int argc, char **argv)
   }
 
   {
+    TaskVariantRegistrar registrar(TID_INIT_GPU, "init_gpu");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    Runtime::preregister_task_variant<init_gpu>(registrar, "init_gpu");
+  }
+
+  {
     TaskVariantRegistrar registrar(TID_LEAF, "leaf");
-    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     Runtime::preregister_task_variant<leaf>(registrar, "leaf");
   }
