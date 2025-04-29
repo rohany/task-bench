@@ -16,7 +16,7 @@ endif
 
 include ../core/make_blas.mk
 
-BIN := main
+BIN := main_ipc main_mpi
 
 .PHONY: all
 all:  $(BIN)
