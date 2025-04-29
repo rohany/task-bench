@@ -1063,7 +1063,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
 
       for (long proc_index = 0; proc_index < num_procs; ++proc_index) {
         auto proc = procs.at(proc_index);
-        auto memory = proc_sysmems.at(proc);
+        auto memory = proc_regmems.at(proc);
 
         long first_point = proc_index * graph.max_width / num_procs;
         long last_point = (proc_index + 1) * graph.max_width / num_procs - 1;
@@ -1105,7 +1105,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     args.num_procs = num_procs;
     args.num_fields = num_fields;
     args.force_copies = force_copies;
-    args.sysmem = proc_sysmems[proc];
+    args.sysmem = proc_regmems[proc];
     args.regmem = proc_regmems[proc];
     args.sync = sync_bar;
     args.first_start = first_start_bar;
@@ -1113,6 +1113,7 @@ void top_level_task(const void *args, size_t arglen, const void *userdata,
     args.first_stop = first_stop_bar;
     args.last_stop = last_stop_bar;
     args.tgt_proc = gpus.at(proc_index);
+    assert(proc.address_space() == args.tgt_proc.address_space());
 
     DynamicBufferSerializer ser(4096);
     ser << args;
