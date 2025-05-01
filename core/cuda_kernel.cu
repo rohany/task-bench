@@ -2,8 +2,10 @@
 #include "core.h"
 #include "cuda_kernel.h"
 #include <unordered_map>
+#include <mutex>
 
 
+std::mutex local_buf_init_lock;
 std::unordered_map<uint64_t, char*> local_buffer;
 int nb_local_buffer = 0;
 size_t local_buffer_size;
@@ -31,6 +33,7 @@ __global__ void execute_kernel_compute_cuda_kernel_unroll_16(long iter, double *
 
 void init_cuda_support(const std::vector<TaskGraph> &graphs, uint64_t gpuid)
 {
+  local_buf_init_lock.lock();
   int nb_gpus = 1;
   
   nb_local_buffer = nb_gpus;
@@ -43,6 +46,7 @@ void init_cuda_support(const std::vector<TaskGraph> &graphs, uint64_t gpuid)
   gpuErrchk( cudaMalloc(&bufptr, sizeof(double) * nb_blocks * threads_per_block * cuda_unroll) );
   local_buffer[gpuid] = (char*)bufptr;
   local_buffer_size = nb_blocks * threads_per_block * sizeof(double);
+  local_buf_init_lock.unlock();
   // for (int i = 0; i < nb_gpus; i++) {
   //   gpuErrchk( cudaSetDevice(0) );
   //   gpuErrchk( cudaMalloc((void**)&(local_buffer[i]), sizeof(double) * nb_blocks * threads_per_block * cuda_unroll) );
