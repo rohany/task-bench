@@ -671,7 +671,7 @@ void LegionApp::execute_main_loop()
     period = lcm(period, g.timestep_period());
   }
   // Group more iterations into a single trace.
-  period *= 5;
+  period *= 25;
 
   long max_timesteps = LONG_MIN;
   for (auto g : graphs) {
