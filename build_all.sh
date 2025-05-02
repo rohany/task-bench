@@ -27,8 +27,8 @@ export CRAYPE_LINK_TYPE=static
 make -C core clean
 make -C core -j$THREADS
 
-make -C kernel_bench clean
-make -C kernel_bench all -j$THREADS
+# make -C kernel_bench clean
+# make -C kernel_bench all -j$THREADS
 
 
 if [[ $TASKBENCH_USE_MPI -eq 1 ]]; then
@@ -61,7 +61,7 @@ if [[ $TASKBENCH_USE_HWLOC -eq 1 ]]; then
     if [[ ! -d build ]]; then
         mkdir build
         cd build
-        ../configure --prefix=$HWLOC_DIR
+        ../configure --prefix=$HWLOC_DIR --with-cuda=$CUDA_ROOT
         make -j$THREADS
         make install
     fi
@@ -139,7 +139,7 @@ fi
 )
 
 if [[ $USE_STARPU -eq 1 ]]; then
-    STARPU_CONFIGURE_FLAG="--disable-cuda --disable-opencl --disable-fortran --disable-build-tests --disable-build-examples --disable-mlr --disable-hdf5 --enable-fast --enable-maxnodes=1"
+    STARPU_CONFIGURE_FLAG="--disable-opencl --disable-fortran --disable-build-tests --disable-build-examples --disable-mlr --disable-hdf5 --enable-fast --enable-maxnodes=1"
     if [[ $TASKBENCH_USE_HWLOC -eq 1 ]]; then
       STARPU_CONFIGURE_FLAG+=""
     else
@@ -174,20 +174,10 @@ fi
         module load craype-hugepages8M
     fi
     pushd "$CHARM_DIR"
-    ./build charm++ $CHARM_VERSION --with-production -j$THREADS
-    popd
-    pushd "$CHARM_SMP_DIR"
-    ./build charm++ $CHARM_VERSION smp --with-production -j$THREADS
+    ./build charm++ $CHARM_VERSION cuda --with-production -j$THREADS
     popd
     make -C charm++ clean
     make -C charm++
-    (
-        export CHARM_DIR="$CHARM_SMP_DIR"
-        rm -rf charm++_smp
-        cp -r charm++ charm++_smp
-        make -C charm++_smp clean
-        make -C charm++_smp
-     )
 fi)
 
 (if [[ $USE_HPX -eq 1 ]]; then

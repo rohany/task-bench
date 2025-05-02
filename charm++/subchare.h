@@ -21,6 +21,8 @@
 #include <vector>
 #include <set>
 
+#include "hapi.h"
+
 class Subchare : public CBase_Subchare {
 
  private:
@@ -41,8 +43,10 @@ class Subchare : public CBase_Subchare {
   App app;
   TaskGraph graph;
   CkSectionInfo sid;
+  CkCallback cb;
 
   void checkAndRun(bool receiving);
+  cudaStream_t stream;
 
  public:
 
@@ -54,6 +58,7 @@ class Subchare : public CBase_Subchare {
   void runTimestep(MulticastMsg* msg);
   void receive(const std::vector<char> &input);
   void reset(MulticastMsg* msg);
+  void signal_children(MulticastMsg* msg);
 
 };
 

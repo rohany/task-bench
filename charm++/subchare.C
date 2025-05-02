@@ -14,10 +14,14 @@
  */
 
 #include <cassert>
+#include <iostream>
 
 #include "subchare.decl.h"
 #include "subchare.h"
 #include "main.decl.h"
+#include "hapi.h"
+
+#include "cuda_kernel.h"
 
 /*readonly*/ extern CProxy_Main mainProxy;
 
@@ -26,6 +30,7 @@ const static bool RECEIVING = true;
 
 Subchare::Subchare(VectorWrapper wrapper, int gi)
   : app(wrapper.vec.size(), wrapper.toArgv()), graphIndex(gi), firstTime(true)
+    , cb(CkIndex_Subchare::signal_children(NULL), thisProxy[thisIndex])
 {}
 
 /**
@@ -37,6 +42,8 @@ void Subchare::initGraph(MulticastMsg* msg) {
   if (firstTime) {
     sid = msg->_cookie;
     firstTime = false;
+    cudaStreamCreate(&stream);
+    init_cuda_support(app.graphs, 0);
   }
   graph = app.graphs[graphIndex];
   currentTimestep = 0;
@@ -107,18 +114,27 @@ void Subchare::initGraph(MulticastMsg* msg) {
 void Subchare::runTimestep(MulticastMsg* msg) {
   long offset = graph.offset_at_timestep(currentTimestep);
   long width = graph.width_at_timestep(currentTimestep);
-  if (offset <= thisIndex && thisIndex < offset + width) 
+  if (offset <= thisIndex && thisIndex < offset + width) {
     graph.execute_point(currentTimestep, thisIndex, output.data(), output.size(),
               (const char **)input_ptrs[currentTimestep].data(),
               (const size_t *)input_bytes[currentTimestep].data(),
               inputs[currentTimestep].size(),
-              scratch.data(), scratch.size());
+              scratch.data(), scratch.size(), stream, 0);
+    hapiAddCallback(stream, &cb);
+  } else {
+    for (long target : whereToSend[currentTimestep]) {
+      thisProxy[target].receive(output);
+    }
+    sent = true;
+    checkAndRun(SENDING);
+  }
+}
 
+void Subchare::signal_children(MulticastMsg*) {
   for (long target : whereToSend[currentTimestep]) {
     thisProxy[target].receive(output);
   }
   sent = true;
-
   checkAndRun(SENDING);
 }
 
