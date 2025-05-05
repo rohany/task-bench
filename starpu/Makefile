@@ -6,7 +6,7 @@ DEBUG ?= 0
 
 CC         = mpic++
 
-CFLAGS     = -DADD_ -fPIC -std=c++11
+CFLAGS     = -DADD_ -fPIC -std=c++11 -DENABLE_CUDA
 LDFLAGS    = -Wall -std=c++11
 
 STARPU_VERSION ?= 1.4
@@ -23,11 +23,11 @@ LDFLAGS		 += -g -O0
 endif
 
 # Include directories
-INC        = -I$(STARPU_DIR)/include/starpu/$(STARPU_VERSION) -I../core
+INC        = -I$(STARPU_DIR)/include/starpu/$(STARPU_VERSION) -I../core -I$(CUDA_ROOT)/include/
 INC_EXT    = 
 
 # Location of the libraries.
-LIB        = -Wl,-rpath,$(STARPU_DIR)/lib: $(STARPU_DIR)/lib/libstarpu-$(STARPU_VERSION).so $(STARPU_DIR)/lib/libstarpumpi-$(STARPU_VERSION).so -L../core -lcore_s
+LIB        = -Wl,-rpath,$(STARPU_DIR)/lib: $(STARPU_DIR)/lib/libstarpu-$(STARPU_VERSION).so $(STARPU_DIR)/lib/libstarpumpi-$(STARPU_VERSION).so -L../core -lcore_s -lcore_cuda_s -L$(CUDA_ROOT)/lib64/ -lcudart
 LIB_EXT    =
 
 ifeq ($(strip $(TASKBENCH_USE_HWLOC)),1)
@@ -41,7 +41,7 @@ CFLAGS += $(INC)
 
 include ../core/make_blas.mk
 
-TARGET = main main_buffer_core main_expl
+TARGET = main_expl
 all: $(TARGET)
 
 .PRECIOUS: %.c %.o
