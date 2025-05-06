@@ -21,6 +21,7 @@
 #include "legion.h"
 #include "mappers/default_mapper.h"
 #include "realm/cuda/cuda_module.h"
+#include "mappers/logging_wrapper.h"
 
 #include "core.h"
 #include "cuda_kernel.h"
@@ -186,6 +187,10 @@ public:
   virtual void default_policy_select_target_processors(MapperContext ctx,
                                                        const Task &task,
                                                        std::vector<Processor> &target_procs);
+  virtual Memory default_policy_select_target_memory(MapperContext ctx,
+                                                     Processor target_proc,
+                                                     const RegionRequirement &req,
+                                                     MemoryConstraint mc);
   virtual void slice_task(const MapperContext      ctx,
                           const Task&              task,
                           const SliceTaskInput&    input,
@@ -237,6 +242,89 @@ void TaskBenchMapper::default_policy_select_target_processors(MapperContext ctx,
 {
   target_procs.push_back(task.target_proc);
 }
+
+//--------------------------------------------------------------------------
+Memory TaskBenchMapper::default_policy_select_target_memory(MapperContext ctx,
+                                   Processor target_proc,
+                                   const RegionRequirement &req,
+                                   MemoryConstraint mc)
+//--------------------------------------------------------------------------
+{
+  bool prefer_rdma = ((req.tag & DefaultMapper::PREFER_RDMA_MEMORY) != 0);
+
+  // Consult the processor-memory mapping cache, but only if the search is
+  // not constrained.
+  if (!mc.is_valid())
+  {
+    // TODO: deal with the updates in machine model which will
+    //       invalidate this cache
+    std::map<Processor,Memory>::iterator it;
+    if (prefer_rdma)
+    {
+      it = cached_rdma_target_memory.find(target_proc);
+      if (it != cached_rdma_target_memory.end()) return it->second;
+    } else {
+      it = cached_target_memory.find(target_proc);
+      if (it != cached_target_memory.end()) return it->second;
+    }
+  }
+
+  // Find the visible memories from the processor for the given kind
+  Machine::MemoryQuery visible_memories(machine);
+  visible_memories.has_affinity_to(target_proc);
+  if (visible_memories.count() == 0)
+  {
+    assert(false);
+  }
+  // Figure out the memory with the highest-bandwidth
+  Memory best_memory = Memory::NO_MEMORY;
+  unsigned best_bandwidth = 0;
+  Memory best_rdma_memory = Memory::NO_MEMORY;
+  unsigned best_rdma_bandwidth = 0;
+  std::vector<Machine::ProcessorMemoryAffinity> affinity(1);
+  for (Machine::MemoryQuery::iterator it = visible_memories.begin();
+        it != visible_memories.end(); it++)
+  {
+    if (mc.is_valid() && mc.get_kind() != it->kind())
+      continue;
+    affinity.clear();
+    machine.get_proc_mem_affinity(affinity, target_proc, *it,
+    			      false /*not just local affinities*/);
+    assert(affinity.size() == 1);
+    if (!best_memory.exists() || (affinity[0].bandwidth > best_bandwidth)) {
+      best_memory = *it;
+      best_bandwidth = affinity[0].bandwidth;
+    }
+    // if ((it->kind() == Memory::REGDMA_MEM || it->kind() == Memory::Z_COPY_MEM) &&
+    //     (!best_rdma_memory.exists() ||
+    //      (affinity[0].bandwidth > best_rdma_bandwidth))) {
+    if ((it->kind() == Memory::REGDMA_MEM) &&
+        (!best_rdma_memory.exists() ||
+         (affinity[0].bandwidth > best_rdma_bandwidth))) {
+      best_rdma_memory = *it;
+      best_rdma_bandwidth = affinity[0].bandwidth;
+    }
+  }
+  if (!best_memory.exists())
+  {
+    assert(false);
+  }
+  if (!best_rdma_memory.exists())
+    best_rdma_memory = best_memory;
+
+  // Cache best memory for target processor, but only if the search wasn't
+  // constrained.
+  if (!mc.is_valid())
+  {
+    if (prefer_rdma)
+      cached_rdma_target_memory[target_proc] = best_rdma_memory;
+    else
+      cached_target_memory[target_proc] = best_memory;
+  }
+  assert(best_rdma_memory.kind() == Memory::Kind::REGDMA_MEM);
+  return prefer_rdma ? best_rdma_memory : best_memory;
+}
+
 
 //--------------------------------------------------------------------------
 void TaskBenchMapper::slice_task(const MapperContext      ctx,
@@ -707,6 +795,7 @@ void LegionApp::init(size_t idx)
       FieldID fout(FID_FIRST + i);
       IndexLauncher launcher(TID_INIT, bounds, TaskArgument(), ArgumentMap());
       MappingTagID tag = exact_instance ? Legion::Mapping::DefaultMapper::EXACT_REGION : 0;
+      tag |= Legion::Mapping::DefaultMapper::PREFER_RDMA_MEMORY;
       const LogicalRegionT<1> &sratch_region = scratch_regions[idx];
       const LogicalPartitionT<1> &scratch = scratch_partitions[idx];
       launcher.add_region_requirement(
@@ -802,6 +891,7 @@ void update_mappers(Machine machine, Runtime *runtime,
   {
     TaskBenchMapper* mapper = new TaskBenchMapper(runtime->get_mapper_runtime(),
                                                   machine, *it, "task_bench_mapper");
+    // runtime->replace_default_mapper(new LoggingWrapper(mapper), *it);
     runtime->replace_default_mapper(mapper, *it);
   }
 }
