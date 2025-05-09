@@ -51,6 +51,23 @@ def get_machine_parameters(machine, processor_kind, resource):
                 assert False
         else:
             assert False
+    elif machine == 'eos':
+        if processor_kind == 'cpu':
+            if resource == 'flops':
+                return {'cores': 112, 'peak_flops': 5.025048e+12, 'peak_bytes': None} # CPU
+            elif resource == 'bytes':
+                assert False
+            else:
+                assert False
+        elif processor_kind == 'gpu':
+            if resource == 'flops':
+                return {'cores': 8, 'peak_flops': 2.72e+14, 'peak_bytes': None} # H100DGX.
+            elif resource == 'bytes':
+                assert False
+            else:
+                assert False
+        else:
+            assert False
     else:
         assert False
 
@@ -77,7 +94,7 @@ def parse_filename(filename):
     node_idx = fields.index('nodes')
     return {
         'name': ' '.join(fields[:graph_idx]),
-        'processor_kind': 'gpu' if 'gpu' in fields[:graph_idx] else 'cpu',
+        'processor_kind': 'gpu', # We're always running with GPUs, it isn't encoded in the filename.
         'ngraphs': int(' '.join(fields[graph_idx+1:type_idx])),
         'type': ' '.join(fields[type_idx+1:radix_idx or imbalance_idx or comm_idx or cores_per_rank_idx or node_idx]),
         'radix': radix_idx and ' '.join(fields[radix_idx+1:imbalance_idx or comm_idx or cores_per_rank_idx or node_idx]),
@@ -109,7 +126,8 @@ class Parser:
                 continue
             params = get_machine_parameters(machine, row['processor_kind'], resource)
             try:
-                data = chart_metg.analyze(filename, row['ngraphs'], row['nodes'], params['cores'], threshold, params['peak_flops'], params['peak_bytes'], summary=summary)
+                # We're lying a bit about the "ngraphs" parameter.
+                data = chart_metg.analyze(filename, 1, row['nodes'], params['cores'], threshold, params['peak_flops'], params['peak_bytes'], summary=summary)
             except Exception as e:
                 if verbose:
                     print('%s:' % filename, file=sys.stderr)
