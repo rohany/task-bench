@@ -2,7 +2,8 @@
 
 
 ./render_metg.py ../flops_stencil1d_eos_gpu_1node.csv \
-           --xlabel 'Problem Size' \
+           --legend-position 'lower left' \
+           --xlabel 'Task Body Iteration Count' \
            --xdata 'iterations' \
            --x-invert \
            --no-xticks \
@@ -11,7 +12,8 @@
            --no-ylog \
            --highlight-column 'metg'
 ./render_metg.py ../flops_stencil1d_4g_eos_gpu_1node.csv \
-           --xlabel 'Problem Size' \
+           --legend-position 'lower left' \
+           --xlabel 'Task Body Iteration Count' \
            --xdata 'iterations' \
            --x-invert \
            --no-xticks \
@@ -45,7 +47,8 @@
                --highlight-column 'metg'
 
 ./render_metg.py ../flops_stencil1d_eos_gpu_2node.csv \
-           --xlabel 'Problem Size' \
+           --legend-position 'lower left' \
+           --xlabel 'Task Body Iteration Count' \
            --xdata 'iterations' \
            --x-invert \
            --no-xticks \
@@ -54,7 +57,8 @@
            --no-ylog \
            --highlight-column 'metg'
 ./render_metg.py ../flops_stencil1d_4g_eos_gpu_2node.csv \
-           --xlabel 'Problem Size' \
+           --legend-position 'lower left' \
+           --xlabel 'Task Body Iteration Count' \
            --xdata 'iterations' \
            --x-invert \
            --no-xticks \
@@ -88,7 +92,8 @@
                --highlight-column 'metg'
 
 ./render_metg.py ../flops_stencil1d_eos_gpu_4node.csv \
-           --xlabel 'Problem Size' \
+           --legend-position 'lower left' \
+           --xlabel 'Task Body Iteration Count' \
            --xdata 'iterations' \
            --x-invert \
            --no-xticks \
@@ -97,7 +102,8 @@
            --no-ylog \
            --highlight-column 'metg'
 ./render_metg.py ../flops_stencil1d_4g_eos_gpu_4node.csv \
-           --xlabel 'Problem Size' \
+           --legend-position 'lower left' \
+           --xlabel 'Task Body Iteration Count' \
            --xdata 'iterations' \
            --x-invert \
            --no-xticks \

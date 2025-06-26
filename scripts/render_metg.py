@@ -175,6 +175,7 @@ if args.legend:
     legend_raw = csv2rec(args.legend)
     legend_label = dict(zip(legend_raw.name, legend_raw.label))
     legend_visible = dict(zip(legend_raw.name, legend_raw.visible))
+    legend_marker = dict(zip(legend_raw.name, legend_raw.marker))
     legend_idx = {}
     next_idx = 0
     for name in legend_raw.name:
@@ -203,6 +204,7 @@ for column in columns:
             label = legend_label[colname] + colsuffix
             visible = legend_visible[colname]
             idx = legend_idx[colname]
+            marker = markers[legend_marker[colname]]
         else:
             label = column.replace('_', ' ')
             idx = next_idx
@@ -241,7 +243,8 @@ for column in columns:
         label = '%s 50%%' % label
     else:
         color = colors[idx]
-        marker = markers[idx]
+        # TODO (rohany): Marker should be defined in this case already now?
+        # marker = markers[idx]
         linetype = '-'
         linewidth = 1
 
@@ -294,5 +297,5 @@ if args.legend:
 plt.grid(True, color='black', linestyle='--', linewidth=0.5, dashes=(1, 5))
 output_filename = '%s.pdf' % os.path.splitext(args.filename)[0]
 print('Generating %s' % output_filename)
-plt.savefig(output_filename)
+plt.savefig(output_filename, bbox_inches="tight")
 plt.close()

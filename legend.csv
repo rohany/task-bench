@@ -1,0 +1,11 @@
+name,label,visible,marker
+charm,Charm++,True,0
+mpi,MPI,True,1
+mpiipc,MPI+CUDAIPC,True,9
+realm,Realm,True,2
+realmsubgraph,Realm Opt,True,3
+cuda,Cuda,True,4
+cudagraph,Cuda Graphs,True,5
+starpu,StarPU,True,6
+legion,Legion,True,7
+legionsubgraph,Legion Opt,True,8
