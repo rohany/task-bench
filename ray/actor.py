@@ -5,7 +5,7 @@ import time
 import os
 import cupy
 
-@ray.remote(num_gpus=1)
+@ray.remote(num_gpus=1.0 * float(os.environ.get('GPU_FRAC', 1.0)))
 class GPU:
     def __init__(self, graph_array):
         core.init_cuda_support(graph_array, 0)
@@ -49,7 +49,8 @@ def execute_task_bench():
     assert(graph.scratch_bytes_per_task == 0)
 
     # Create all the GPUs.
-    gpus = [GPU.remote(core.encode_task_graph(graph)) for _ in range(int(ray.cluster_resources()['GPU']))]
+    # gpus = [GPU.remote(core.encode_task_graph(graph)) for _ in range(int(ray.cluster_resources()['GPU']))]
+    gpus = [GPU.remote(core.encode_task_graph(graph)) for _ in range(graph.max_width)]
 
     results = []
     for task_graph in task_graphs:
