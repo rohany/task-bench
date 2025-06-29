@@ -5,7 +5,7 @@ import time
 import os
 import cupy
 
-@ray.remote(num_gpus=1.0 * float(os.environ.get('GPU_FRAC', 1.0)))
+@ray.remote(num_gpus=1.0 * float(os.environ.get('GPU_FRAC', 1.0)), num_cpus=1)
 class GPU:
     def __init__(self, graph_array):
         core.init_cuda_support(graph_array, 0)
