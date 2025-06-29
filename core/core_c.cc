@@ -102,12 +102,13 @@ void task_graph_execute_point_scratch(task_graph_t graph, long timestep, long po
                                       char *output_ptr, size_t output_bytes,
                                       const char **input_ptr, const size_t *input_bytes,
                                       size_t n_inputs,
-                                      char *scratch_ptr, size_t scratch_bytes)
+                                      char *scratch_ptr, size_t scratch_bytes,
+				      void* stream, int gpuid)
 {
   TaskGraph t(graph);
   t.execute_point(timestep, point, output_ptr, output_bytes,
                   input_ptr, input_bytes, n_inputs,
-                  scratch_ptr, scratch_bytes, nullptr, 0);
+                  scratch_ptr, scratch_bytes, stream, gpuid);
 }
 
 void task_graph_execute_point_scratch_auto(task_graph_t graph, long timestep, long point,

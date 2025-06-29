@@ -53,6 +53,16 @@ void init_cuda_support(const std::vector<TaskGraph> &graphs, uint64_t gpuid)
   //   assert(local_buffer[i] != NULL);
   //   gpuErrchk( cudaStreamCreate(&(cuda_stream_array[i])) );
   // }
+
+  Kernel kernel = graphs[0].kernel;
+  kernel.stream = 0;
+  execute_kernel_compute_cuda(kernel, nullptr, 0);
+  cudaStreamSynchronize(0);
+}
+
+void init_cuda_support_c(task_graph_t graph, int64_t gpuid) {
+  TaskGraph t(graph);
+  init_cuda_support({graph}, gpuid);
 }
 
 void fini_cuda_support()

@@ -32,7 +32,7 @@ endif
 ifeq ($(shell uname), Darwin)
 	NVCCLDFLAGS += -L. -Wl,-force_load,libcore_cuda.a
 else
-	NVCCLDFLAGS += -L. -Wl,--whole-archive -lcore_cuda -Wl,--no-whole-archive
+	NVCCLDFLAGS += -L. -Wl,--whole-archive -lcore_cuda -Wl,--no-whole-archive -L $(CUDA_ROOT)/lib64/ -lcudart
 endif
 
 endif
