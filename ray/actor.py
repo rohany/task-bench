@@ -39,7 +39,7 @@ def execute_task_graph(graph, gpus):
             row.append(None)
         assert len(row) == graph.max_width
         last_row = row
-    return outputs
+    return last_row
 
 def execute_task_graph_compgraph(graph, gpus):
     graph_array = core.encode_task_graph(graph)
