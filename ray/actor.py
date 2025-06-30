@@ -1,4 +1,5 @@
 import ray
+import ray.dag
 import sys
 import core
 import time
@@ -40,6 +41,74 @@ def execute_task_graph(graph, gpus):
         last_row = row
     return outputs
 
+def execute_task_graph_compgraph(graph, gpus):
+    graph_array = core.encode_task_graph(graph)
+    assert(graph.scratch_bytes_per_task == 0)
+    # assert(graph.timestep_period == 1)
+
+    ray_graph = None
+    previous_row = None
+    start_time = None
+    end_time = None
+
+    # Execute the graph in batches of this size.
+    batchsize = 25
+    assert(graph.timesteps % batchsize == 0)
+    for start_timestep in range(0, graph.timesteps, batchsize):
+        # Always define the graph, and start timer only once the steady state is hit?
+        # TODO (rohany): Gaurd condition for the dag definition
+        if start_timestep == 0:
+            last_row = None
+            for timestep in range(start_timestep, start_timestep + batchsize):
+                offset = core.c.task_graph_offset_at_timestep(graph, timestep)
+                width = core.c.task_graph_width_at_timestep(graph, timestep)
+                row = []
+                for point in range(0, offset):
+                    row.append(None)
+                for point in range(offset, offset + width):
+                    inputs = []
+                    for dep in core.task_graph_dependencies(graph, timestep, point):
+                        inputs.append(last_row[dep])
+                    points_per_proc = graph.max_width // len(gpus)
+                    output = gpus[point // points_per_proc].execute_point.remote(graph_array, timestep, point, *inputs)
+                    row.append(output)
+                for point in range(offset + width, graph.max_width):
+                    row.append(None)
+                assert len(row) == graph.max_width
+                last_row = row
+            previous_row = [ray.get(o) for o in last_row]
+        else:
+            if ray_graph is None:
+                with ray.dag.InputNode() as inp:
+                    last_row = inp
+                    for timestep in range(start_timestep, start_timestep + batchsize):
+                        offset = core.c.task_graph_offset_at_timestep(graph, timestep)
+                        width = core.c.task_graph_width_at_timestep(graph, timestep)
+                        row = []
+                        for point in range(0, offset):
+                            row.append(None)
+                        for point in range(offset, offset + width):
+                            inputs = []
+                            for dep in core.task_graph_dependencies(graph, timestep, point):
+                                inputs.append(last_row[dep])
+                            points_per_proc = graph.max_width // len(gpus)
+                            local_idx = timestep - start_timestep
+                            output = gpus[point // points_per_proc].execute_point.bind(graph_array, inp[graph.max_width + local_idx], point, *inputs)
+                            row.append(output)
+                        for point in range(offset + width, graph.max_width):
+                            row.append(None)
+                        assert len(row) == graph.max_width
+                        last_row = row
+                ray_graph = ray.dag.MultiOutputNode(last_row).experimental_compile()
+                start_time = time.perf_counter()
+                # print("done compiling graph")
+            args = previous_row + list(range(start_timestep, start_timestep + batchsize)) 
+            # print(args)
+            previous_row = ray.get(ray_graph.execute(*args))
+            # print("done invoking graph")
+    end_time = time.perf_counter()
+    return end_time - start_time
+
 def execute_task_bench():
     print("Running standard version!")
     app = core.app_create(sys.argv)
@@ -49,7 +118,6 @@ def execute_task_bench():
     assert(graph.scratch_bytes_per_task == 0)
 
     # Create all the GPUs.
-    # gpus = [GPU.remote(core.encode_task_graph(graph)) for _ in range(int(ray.cluster_resources()['GPU']))]
     gpus = [GPU.remote(core.encode_task_graph(graph)) for _ in range(graph.max_width)]
 
     results = []
@@ -65,6 +133,17 @@ def execute_task_bench():
     total_time = time.perf_counter() - start_time
     core.c.app_report_timing(app, total_time)
 
+def execute_task_bench_graphs():
+    print("Running cgraphs version!")
+    app = core.app_create(sys.argv)
+    task_graphs = core.app_task_graphs(app)
+    assert(len(task_graphs) == 1)
+    graph = task_graphs[0]
+    assert(graph.scratch_bytes_per_task == 0)
+
+    # Create all the GPUs.
+    gpus = [GPU.remote(core.encode_task_graph(graph)) for _ in range(graph.max_width)]
+    core.c.app_report_timing(app, execute_task_graph_compgraph(graph, gpus))
 
 # TODO (rohany): Handle higher widths later...
 @ray.remote(num_gpus=1)
@@ -159,9 +238,8 @@ def execute_task_bench2():
         time.sleep(1)
 
 if __name__ == "__main__":
-    # ray.init(address="auto")
     ray.init()
-    if 'ctrlrepl' in sys.argv:
-        execute_task_bench2()
+    if 'cgraphs' in sys.argv:
+        execute_task_bench_graphs()
     else:
         execute_task_bench()
