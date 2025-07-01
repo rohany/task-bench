@@ -9,3 +9,5 @@ cudagraph,Cuda Graphs,True,5
 starpu,StarPU,True,6
 legion,Legion,True,7
 legionsubgraph,Legion Opt,True,8
+rayactor,Ray Actor,True,10
+raygraph,Ray Graphs,True,11

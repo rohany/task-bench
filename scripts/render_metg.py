@@ -37,7 +37,7 @@ parser.add_argument('--width', type=float, default=9)
 parser.add_argument('--height', type=float, default=5)
 parser.add_argument('--legend', default='../legend.csv')
 parser.add_argument('--legend-ncol', type=int, default=1)
-parser.add_argument('--legend-fontsize', type=int, default=13)
+parser.add_argument('--legend-fontsize', type=int, default=11)
 parser.add_argument('--legend-position', default='center left')
 parser.add_argument('--legend-base', type=int, default=0)
 parser.add_argument('--legend-suffix', action='append', default=[])
@@ -76,7 +76,6 @@ markers = [
     '1',
     'p',
     'x',
-    'D',
     '8',
     '4',
     'v',
