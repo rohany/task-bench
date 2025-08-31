@@ -64,7 +64,7 @@ include make_cuda.mk
 
 .PHONY: all
 ifeq ($(strip $(HAVE_CUDA)),1)
-all: $(SLIB) $(DLIB) $(SLIB_SYMLINK) $(CUDA_SLIB) $(CUDA_DLIB) $(CUDA_SLIB_SYMLINK)
+all: $(CUDA_SLIB) $(CUDA_DLIB) $(CUDA_SLIB_SYMLINK) $(SLIB) $(DLIB) $(SLIB_SYMLINK)
 else
 all: $(SLIB) $(DLIB) $(SLIB_SYMLINK)
 endif
@@ -75,7 +75,7 @@ $(SLIB): $(OBJS) $(COBJS)
 
 $(DLIB): $(SLIB)
 	rm -f $@
-	$(CXX) $(LDFLAGS) -o $@.0
+	$(CXX) $(LDFLAGS) -lcore_cuda -o $@.0
 	mv $@.0 $@
 
 $(SLIB_SYMLINK):

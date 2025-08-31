@@ -109,7 +109,7 @@ void task_graph_execute_point_scratch(task_graph_t graph, long timestep, long po
                                       char *output_ptr, size_t output_bytes,
                                       const char **input_ptr, const size_t *input_bytes,
                                       size_t n_inputs,
-                                      char *scratch_ptr, size_t scratch_bytes);
+                                      char *scratch_ptr, size_t scratch_bytes, void* stream, int gpuid);
 // Hack: This version is here for Spark because allocating scratch_ptr
 // through the JVM seems to cause the GC to thrash.
 void task_graph_execute_point_scratch_auto(task_graph_t graph, long timestep, long point,
@@ -149,6 +149,10 @@ bool app_verbose(app_t app);
 void app_check(app_t app);
 void app_display(app_t app);
 void app_report_timing(app_t app, double elapsed_seconds);
+
+#ifdef ENABLE_CUDA
+void init_cuda_support_c(task_graph_t graph, int64_t gpuid);
+#endif
 
 #ifdef __cplusplus
 }

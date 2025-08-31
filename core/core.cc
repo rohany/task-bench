@@ -82,8 +82,9 @@ void Kernel::execute(long graph_index, long timestep, long point,
     break;
 #ifdef ENABLE_CUDA
   case KernelType::CUDA_COMPUTE_BOUND:
-    assert(scratch_ptr != NULL);
-    assert(scratch_bytes > 0);
+    // We don't need this for ray?
+    // assert(scratch_ptr != NULL);
+    // assert(scratch_bytes > 0);
     execute_kernel_compute_cuda(*this, scratch_ptr, scratch_bytes);
     break; 
 #endif
@@ -1334,6 +1335,6 @@ void App::report_timing(double elapsed_seconds, int skipped_iters) const
 #endif
   
 #ifdef ENABLE_CUDA
-  fini_cuda_support();
+  // fini_cuda_support();
 #endif
 }
